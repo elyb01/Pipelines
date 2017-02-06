@@ -34,7 +34,7 @@ show_usage() {
 # --------------------------------------------------------------------------------
 #   Establish tool name for logging
 # --------------------------------------------------------------------------------
-log_SetToolName "GenericfMRIVolumeProcessingPipeline.sh"
+log_SetToolName "GenericfMRIVolumeProcessingPipelinePlusNativeBOLD_AutoResume.sh"
 
 ################################################## OPTION PARSING #####################################################
 
@@ -175,6 +175,7 @@ ResultsFolder="Results"
 BiasField="BiasField_acpc_dc"
 BiasFieldMNI="BiasField"
 T1wAtlasName="T1w_restore"
+T1wNativeName="T1w_acpc_dc_restore"
 MovementRegressor="Movement_Regressors" #No extension, .txt appended
 MotionMatrixFolder="MotionMatrices"
 MotionMatrixPrefix="MAT_"
@@ -190,6 +191,8 @@ RegOutput="Scout2T1w"
 AtlasTransform="acpc_dc2standard"
 OutputfMRI2StandardTransform="${NameOffMRI}2standard"
 Standard2OutputfMRITransform="standard2${NameOffMRI}"
+OutputfMRI2NativeTransform="${NameOffMRI}2native" #Native
+Native2OutputfMRITransform="native2${NameOffMRI}" #Native
 QAImage="T1wMulEPI"
 JacobianOut="Jacobian"
 SubjectFolder="$Path"/"$Subject"
@@ -208,7 +211,8 @@ case "$BiasCorrection" in
     ;;
     
     SEBASED)
-        if [[ "$DistortionCorrection" != "TOPUP" ]]
+        echo "CAUTION: SEBASED BIAS CORRECTION NOT CURRENTLY SET UP FOR NATIVE FMRI PREPROCESSING!"
+		if [[ "$DistortionCorrection" != "TOPUP" ]]
         then
             log_Msg "SEBASED bias correction is only available with --dcmethod=TOPUP"
             exit 1
@@ -232,195 +236,233 @@ esac
 T1wFolder="$Path"/"$Subject"/"$T1wFolder"
 AtlasSpaceFolder="$Path"/"$Subject"/"$AtlasSpaceFolder"
 ResultsFolder="$AtlasSpaceFolder"/"$ResultsFolder"/"$NameOffMRI"
-
-mkdir -p ${T1wFolder}/Results/${NameOffMRI}
+NativeResultsFolder="$T1wFolder"/"$ResultsFolder"/"$NameOffMRI" #Native
+fMRIFolder="$Path"/"$Subject"/"$NameOffMRI"
 
 if [ ! -e "$fMRIFolder" ] ; then
   log_Msg "mkdir ${fMRIFolder}"
   mkdir "$fMRIFolder"
 fi
-cp "$fMRITimeSeries" "$fMRIFolder"/"$OrigTCSName".nii.gz
 
-#Create fake "Scout" if it doesn't exist
-if [ $fMRIScout = "NONE" ] ; then
-  ${RUN} ${FSLDIR}/bin/fslroi "$fMRIFolder"/"$OrigTCSName" "$fMRIFolder"/"$OrigScoutName" 0 1
-else
-  cp "$fMRIScout" "$fMRIFolder"/"$OrigScoutName".nii.gz
+if [ ! -e  "$fMRIFolder"/"$OrigTCSName".nii.gz ] ; then
+	cp "$fMRITimeSeries" "$fMRIFolder"/"$OrigTCSName".nii.gz
 fi
 
-#Gradient Distortion Correction of fMRI
-log_Msg "Gradient Distortion Correction of fMRI"
-if [ ! $GradientDistortionCoeffs = "NONE" ] ; then
-    log_Msg "mkdir -p ${fMRIFolder}/GradientDistortionUnwarp"
-    mkdir -p "$fMRIFolder"/GradientDistortionUnwarp
-    ${RUN} "$GlobalScripts"/GradientDistortionUnwarp.sh \
-	--workingdir="$fMRIFolder"/GradientDistortionUnwarp \
-	--coeffs="$GradientDistortionCoeffs" \
-	--in="$fMRIFolder"/"$OrigTCSName" \
-	--out="$fMRIFolder"/"$NameOffMRI"_gdc \
-	--owarp="$fMRIFolder"/"$NameOffMRI"_gdc_warp
+if [ ! -e "$fMRIFolder"/"$OrigScoutName".nii.gz ] ; then
+	#Create fake "Scout" if it doesn't exist
+	if [ $fMRIScout = "NONE" ] ; then
+		${RUN} ${FSLDIR}/bin/fslroi "$fMRIFolder"/"$OrigTCSName" "$fMRIFolder"/"$OrigScoutName" 0 1
+	else
+		cp "$fMRIScout" "$fMRIFolder"/"$OrigScoutName".nii.gz
+	fi
+fi
 
-    log_Msg "mkdir -p ${fMRIFolder}/${ScoutName}_GradientDistortionUnwarp"	
-     mkdir -p "$fMRIFolder"/"$ScoutName"_GradientDistortionUnwarp
-     ${RUN} "$GlobalScripts"/GradientDistortionUnwarp.sh \
-	 --workingdir="$fMRIFolder"/"$ScoutName"_GradientDistortionUnwarp \
-	 --coeffs="$GradientDistortionCoeffs" \
-	 --in="$fMRIFolder"/"$OrigScoutName" \
-	 --out="$fMRIFolder"/"$ScoutName"_gdc \
-	 --owarp="$fMRIFolder"/"$ScoutName"_gdc_warp
-	 
-	if [[ $UseJacobian == "true" ]]
-	then
-	    ${RUN} ${FSLDIR}/bin/fslmaths "$fMRIFolder"/"$NameOffMRI"_gdc -mul "$fMRIFolder"/"$NameOffMRI"_gdc_warp_jacobian "$fMRIFolder"/"$NameOffMRI"_gdc
-	    ${RUN} ${FSLDIR}/bin/fslmaths "$fMRIFolder"/"$ScoutName"_gdc -mul "$fMRIFolder"/"$ScoutName"_gdc_warp_jacobian "$fMRIFolder"/"$ScoutName"_gdc
+if [ ! -e "${fMRIFolder}/MotionCorrection_FLIRTbased" ] ; then
+	#Gradient Distortion Correction of fMRI
+	log_Msg "Gradient Distortion Correction of fMRI"
+	if [ ! $GradientDistortionCoeffs = "NONE" ] ; then
+		log_Msg "mkdir -p ${fMRIFolder}/GradientDistortionUnwarp"
+		mkdir -p "$fMRIFolder"/GradientDistortionUnwarp
+    	${RUN} "$GlobalScripts"/GradientDistortionUnwarp.sh \
+		--workingdir="$fMRIFolder"/GradientDistortionUnwarp \
+		--coeffs="$GradientDistortionCoeffs" \
+		--in="$fMRIFolder"/"$OrigTCSName" \
+		--out="$fMRIFolder"/"$NameOffMRI"_gdc \
+		--owarp="$fMRIFolder"/"$NameOffMRI"_gdc_warp
+		
+		log_Msg "mkdir -p ${fMRIFolder}/${ScoutName}_GradientDistortionUnwarp"	
+     	mkdir -p "$fMRIFolder"/"$ScoutName"_GradientDistortionUnwarp
+     	${RUN} "$GlobalScripts"/GradientDistortionUnwarp.sh \
+	 	--workingdir="$fMRIFolder"/"$ScoutName"_GradientDistortionUnwarp \
+		--coeffs="$GradientDistortionCoeffs" \
+		--in="$fMRIFolder"/"$OrigScoutName" \
+		--out="$fMRIFolder"/"$ScoutName"_gdc \
+		--owarp="$fMRIFolder"/"$ScoutName"_gdc_warp
+	else
+		log_Msg "NOT PERFORMING GRADIENT DISTORTION CORRECTION"
+		${RUN} ${FSLDIR}/bin/imcp "$fMRIFolder"/"$OrigTCSName" "$fMRIFolder"/"$NameOffMRI"_gdc
+		${RUN} ${FSLDIR}/bin/fslroi "$fMRIFolder"/"$NameOffMRI"_gdc "$fMRIFolder"/"$NameOffMRI"_gdc_warp 0 3
+		${RUN} ${FSLDIR}/bin/fslmaths "$fMRIFolder"/"$NameOffMRI"_gdc_warp -mul 0 "$fMRIFolder"/"$NameOffMRI"_gdc_warp
+		${RUN} ${FSLDIR}/bin/imcp "$fMRIFolder"/"$OrigScoutName" "$fMRIFolder"/"$ScoutName"_gdc
 	fi
 else
-    log_Msg "NOT PERFORMING GRADIENT DISTORTION CORRECTION"
-    ${RUN} ${FSLDIR}/bin/imcp "$fMRIFolder"/"$OrigTCSName" "$fMRIFolder"/"$NameOffMRI"_gdc
-    ${RUN} ${FSLDIR}/bin/fslroi "$fMRIFolder"/"$NameOffMRI"_gdc "$fMRIFolder"/"$NameOffMRI"_gdc_warp 0 3
-    ${RUN} ${FSLDIR}/bin/fslmaths "$fMRIFolder"/"$NameOffMRI"_gdc_warp -mul 0 "$fMRIFolder"/"$NameOffMRI"_gdc_warp
-    ${RUN} ${FSLDIR}/bin/imcp "$fMRIFolder"/"$OrigScoutName" "$fMRIFolder"/"$ScoutName"_gdc
-    #make fake jacobians of all 1s, for completeness
-    ${RUN} ${FSLDIR}/bin/fslmaths "$fMRIFolder"/"$OrigScoutName" -mul 0 -add 1 "$fMRIFolder"/"$ScoutName"_gdc_warp_jacobian
-    ${RUN} ${FSLDIR}/bin/fslroi "$fMRIFolder"/"$NameOffMRI"_gdc_warp "$fMRIFolder"/"$NameOffMRI"_gdc_warp_jacobian 0 1
-    ${RUN} ${FSLDIR}/bin/fslmaths "$fMRIFolder"/"$NameOffMRI"_gdc_warp_jacobian -mul 0 -add 1 "$fMRIFolder"/"$NameOffMRI"_gdc_warp_jacobian
+	echo "\nGradient Distortion Correction appears complete. Skipping to Motion Correction.\n"
 fi
 
-log_Msg "mkdir -p ${fMRIFolder}/MotionCorrection"
-mkdir -p "$fMRIFolder"/MotionCorrection
-${RUN} "$PipelineScripts"/MotionCorrection.sh \
-    "$fMRIFolder"/MotionCorrection \
-    "$fMRIFolder"/"$NameOffMRI"_gdc \
-    "$fMRIFolder"/"$ScoutName"_gdc \
-    "$fMRIFolder"/"$NameOffMRI"_mc \
-    "$fMRIFolder"/"$MovementRegressor" \
-    "$fMRIFolder"/"$MotionMatrixFolder" \
-    "$MotionMatrixPrefix" \
-    "$MotionCorrectionType"
-
-# EPI Distortion Correction and EPI to T1w Registration
-log_Msg "EPI Distortion Correction and EPI to T1w Registration"
-
-DCFolderName=DistortionCorrectionAndEPIToT1wReg_FLIRTBBRAndFreeSurferBBRbased
-DCFolder=${fMRIFolder}/${DCFolderName}
-
-if [ -e ${DCFolder} ] ; then
-    ${RUN} rm -r ${DCFolder}
-fi
-log_Msg "mkdir -p ${DCFolder}"
-mkdir -p ${DCFolder}
-
-${RUN} ${PipelineScripts}/DistortionCorrectionAndEPIToT1wReg_FLIRTBBRAndFreeSurferBBRbased.sh \
-    --workingdir=${DCFolder} \
-    --scoutin=${fMRIFolder}/${ScoutName}_gdc \
-    --t1=${T1wFolder}/${T1wImage} \
-    --t1restore=${T1wFolder}/${T1wRestoreImage} \
-    --t1brain=${T1wFolder}/${T1wRestoreImageBrain} \
-    --fmapmag=${MagnitudeInputName} \
-    --fmapphase=${PhaseInputName} \
-    --fmapgeneralelectric=${GEB0InputName} \
-    --echodiff=${deltaTE} \
-    --SEPhaseNeg=${SpinEchoPhaseEncodeNegative} \
-    --SEPhasePos=${SpinEchoPhaseEncodePositive} \
-    --echospacing=${DwellTime} \
-    --unwarpdir=${UnwarpDir} \
-    --owarp=${T1wFolder}/xfms/${fMRI2strOutputTransform} \
-    --biasfield=${T1wFolder}/${BiasField} \
-    --oregim=${fMRIFolder}/${RegOutput} \
-    --freesurferfolder=${T1wFolder} \
-    --freesurfersubjectid=${Subject} \
-    --gdcoeffs=${GradientDistortionCoeffs} \
-    --qaimage=${fMRIFolder}/${QAImage} \
-    --method=${DistortionCorrection} \
-    --topupconfig=${TopupConfig} \
-    --ojacobian=${fMRIFolder}/${JacobianOut} \
-    --dof=${dof} \
-    --fmriname=${NameOffMRI} \
-    --subjectfolder=${SubjectFolder} \
-    --biascorrection=${BiasCorrection} \
-    --usejacobian=${UseJacobian}
-    
-#One Step Resampling
-log_Msg "One Step Resampling"
-log_Msg "mkdir -p ${fMRIFolder}/OneStepResampling"
-
-mkdir -p ${fMRIFolder}/OneStepResampling
-${RUN} ${PipelineScripts}/OneStepResampling.sh \
-    --workingdir=${fMRIFolder}/OneStepResampling \
-    --infmri=${fMRIFolder}/${OrigTCSName}.nii.gz \
-    --t1=${AtlasSpaceFolder}/${T1wAtlasName} \
-    --fmriresout=${FinalfMRIResolution} \
-    --fmrifolder=${fMRIFolder} \
-    --fmri2structin=${T1wFolder}/xfms/${fMRI2strOutputTransform} \
-    --struct2std=${AtlasSpaceFolder}/xfms/${AtlasTransform} \
-    --owarp=${AtlasSpaceFolder}/xfms/${OutputfMRI2StandardTransform} \
-    --oiwarp=${AtlasSpaceFolder}/xfms/${Standard2OutputfMRITransform} \
-    --motionmatdir=${fMRIFolder}/${MotionMatrixFolder} \
-    --motionmatprefix=${MotionMatrixPrefix} \
-    --ofmri=${fMRIFolder}/${NameOffMRI}_nonlin \
-    --freesurferbrainmask=${AtlasSpaceFolder}/${FreeSurferBrainMask} \
-    --biasfield=${AtlasSpaceFolder}/${BiasFieldMNI} \
-    --gdfield=${fMRIFolder}/${NameOffMRI}_gdc_warp \
-    --scoutin=${fMRIFolder}/${OrigScoutName} \
-    --scoutgdcin=${fMRIFolder}/${ScoutName}_gdc \
-    --oscout=${fMRIFolder}/${NameOffMRI}_SBRef_nonlin \
-    --ojacobian=${fMRIFolder}/${JacobianOut}_MNI.${FinalfMRIResolution}
-    
-log_Msg "mkdir -p ${ResultsFolder}"
-mkdir -p ${ResultsFolder}
-
-#now that we have the final MNI fMRI space, resample the T1w-space sebased bias field related outputs
-#the alternative is to add a bunch of optional arguments to OneStepResampling that just do the same thing
-#we need to do this before intensity normalization, as it uses the bias field output
-if [[ ${DistortionCorrection} == "TOPUP" ]]
-then
-    #create MNI space corrected fieldmap images
-    ${FSLDIR}/bin/applywarp --rel --interp=spline --in=${DCFolder}/PhaseOne_gdc_dc_unbias -w ${AtlasSpaceFolder}/xfms/${AtlasTransform} -r ${fMRIFolder}/${NameOffMRI}_SBRef_nonlin -o ${ResultsFolder}/${NameOffMRI}_PhaseOne_gdc_dc
-    ${FSLDIR}/bin/applywarp --rel --interp=spline --in=${DCFolder}/PhaseTwo_gdc_dc_unbias -w ${AtlasSpaceFolder}/xfms/${AtlasTransform} -r ${fMRIFolder}/${NameOffMRI}_SBRef_nonlin -o ${ResultsFolder}/${NameOffMRI}_PhaseTwo_gdc_dc
-    
-    #create MNINonLinear final fMRI resolution bias field outputs
-    if [[ ${BiasCorrection} == "SEBASED" ]]
-    then
-        ${FSLDIR}/bin/applywarp --interp=trilinear -i ${DCFolder}/ComputeSpinEchoBiasField/sebased_bias_dil.nii.gz -r ${fMRIFolder}/${NameOffMRI}_SBRef_nonlin -w ${AtlasSpaceFolder}/xfms/${AtlasTransform} -o ${ResultsFolder}/${NameOffMRI}_sebased_bias.nii.gz
-        ${FSLDIR}/bin/fslmaths ${ResultsFolder}/${NameOffMRI}_sebased_bias.nii.gz -mas ${fMRIFolder}/${FreeSurferBrainMask}.${FinalfMRIResolution}.nii.gz ${ResultsFolder}/${NameOffMRI}_sebased_bias.nii.gz
-        
-        ${FSLDIR}/bin/applywarp --interp=trilinear -i ${DCFolder}/ComputeSpinEchoBiasField/sebased_reference_dil.nii.gz -r ${fMRIFolder}/${NameOffMRI}_SBRef_nonlin -w ${AtlasSpaceFolder}/xfms/${AtlasTransform} -o ${ResultsFolder}/${NameOffMRI}_sebased_reference.nii.gz
-        ${FSLDIR}/bin/fslmaths ${ResultsFolder}/${NameOffMRI}_sebased_reference.nii.gz -mas ${fMRIFolder}/${FreeSurferBrainMask}.${FinalfMRIResolution}.nii.gz ${ResultsFolder}/${NameOffMRI}_sebased_reference.nii.gz
-        
-        ${FSLDIR}/bin/applywarp --interp=trilinear -i ${DCFolder}/ComputeSpinEchoBiasField/${NameOffMRI}_dropouts.nii.gz -r ${fMRIFolder}/${NameOffMRI}_SBRef_nonlin -w ${AtlasSpaceFolder}/xfms/${AtlasTransform} -o ${ResultsFolder}/${NameOffMRI}_dropouts.nii.gz
-    fi
+if [ ! -e "${fMRIFolder}/DistortionCorrectionAndEPIToT1wReg_FLIRTBBRAndFreeSurferBBRbased" ] ; then
+	log_Msg "mkdir -p ${fMRIFolder}/MotionCorrection_FLIRTbased"
+	mkdir -p "$fMRIFolder"/MotionCorrection_FLIRTbased
+	${RUN} "$PipelineScripts"/MotionCorrection_FLIRTbased.sh \
+		"$fMRIFolder"/MotionCorrection_FLIRTbased \
+		"$fMRIFolder"/"$NameOffMRI"_gdc \
+    	"$fMRIFolder"/"$ScoutName"_gdc \
+    	"$fMRIFolder"/"$NameOffMRI"_mc \
+    	"$fMRIFolder"/"$MovementRegressor" \
+    	"$fMRIFolder"/"$MotionMatrixFolder" \
+    	"$MotionMatrixPrefix" 
+else
+	echo "\nMotion Correction appears complete. Skipping to EPI Correction.\n"
 fi
 
-#Intensity Normalization and Bias Removal
-log_Msg "Intensity Normalization and Bias Removal"
-${RUN} ${PipelineScripts}/IntensityNormalization.sh \
-    --infmri=${fMRIFolder}/${NameOffMRI}_nonlin \
-    --biasfield=${UseBiasFieldMNI} \
-    --jacobian=${fMRIFolder}/${JacobianOut}_MNI.${FinalfMRIResolution} \
-    --brainmask=${fMRIFolder}/${FreeSurferBrainMask}.${FinalfMRIResolution} \
-    --ofmri=${fMRIFolder}/${NameOffMRI}_nonlin_norm \
-    --inscout=${fMRIFolder}/${NameOffMRI}_SBRef_nonlin \
-    --oscout=${fMRIFolder}/${NameOffMRI}_SBRef_nonlin_norm \
-    --usejacobian=${UseJacobian}
+if [ ! -e "${fMRIFolder}/OneStepResampling" ] ; then
+	#EPI Distortion Correction and EPI to T1w Registration
+	log_Msg "EPI Distortion Correction and EPI to T1w Registration"
+	if [ -e ${fMRIFolder}/DistortionCorrectionAndEPIToT1wReg_FLIRTBBRAndFreeSurferBBRbased ] ; then
+		rm -r ${fMRIFolder}/DistortionCorrectionAndEPIToT1wReg_FLIRTBBRAndFreeSurferBBRbased
+	fi
+	log_Msg "mkdir -p ${fMRIFolder}/DistortionCorrectionAndEPIToT1wReg_FLIRTBBRAndFreeSurferBBRbased"
+	mkdir -p ${fMRIFolder}/DistortionCorrectionAndEPIToT1wReg_FLIRTBBRAndFreeSurferBBRbased
+	
+	${RUN} ${PipelineScripts}/DistortionCorrectionAndEPIToT1wReg_FLIRTBBRAndFreeSurferBBRbased.sh \
+		--workingdir=${fMRIFolder}/DistortionCorrectionAndEPIToT1wReg_FLIRTBBRAndFreeSurferBBRbased \
+    	--scoutin=${fMRIFolder}/${ScoutName}_gdc \
+    	--t1=${T1wFolder}/${T1wImage} \
+    	--t1restore=${T1wFolder}/${T1wRestoreImage} \
+    	--t1brain=${T1wFolder}/${T1wRestoreImageBrain} \
+    	--fmapmag=${MagnitudeInputName} \
+    	--fmapphase=${PhaseInputName} \
+    	--echodiff=${deltaTE} \
+    	--SEPhaseNeg=${SpinEchoPhaseEncodeNegative} \
+   		--SEPhasePos=${SpinEchoPhaseEncodePositive} \
+    	--echospacing=${DwellTime} \
+    	--unwarpdir=${UnwarpDir} \
+    	--owarp=${T1wFolder}/xfms/${fMRI2strOutputTransform} \
+    	--biasfield=${T1wFolder}/${BiasField} \
+    	--oregim=${fMRIFolder}/${RegOutput} \
+    	--freesurferfolder=${T1wFolder} \
+    	--freesurfersubjectid=${Subject} \
+    	--gdcoeffs=${GradientDistortionCoeffs} \
+    	--qaimage=${fMRIFolder}/${QAImage} \
+    	--method=${DistortionCorrection} \
+    	--topupconfig=${TopupConfig} \
+    	--ojacobian=${fMRIFolder}/${JacobianOut} 
+else
+	echo "\nEPI Correction appears complete. Skipping to One Step Resampling.\n"
+fi
 
-# MJ QUERY: WHY THE -r OPTIONS BELOW?
-# TBr Response: Since the copy operations are specifying individual files
-# to be copied and not directories, the recursive copy options (-r) to the
-# cp calls below definitely seem unnecessary. They should be removed in 
-# a code clean up phase when tests are in place to verify that removing them
-# has no unexpected bad side-effect.
-${RUN} cp -r ${fMRIFolder}/${NameOffMRI}_nonlin_norm.nii.gz ${ResultsFolder}/${NameOffMRI}.nii.gz
-${RUN} cp -r ${fMRIFolder}/${MovementRegressor}.txt ${ResultsFolder}/${MovementRegressor}.txt
-${RUN} cp -r ${fMRIFolder}/${MovementRegressor}_dt.txt ${ResultsFolder}/${MovementRegressor}_dt.txt
-${RUN} cp -r ${fMRIFolder}/${NameOffMRI}_SBRef_nonlin_norm.nii.gz ${ResultsFolder}/${NameOffMRI}_SBRef.nii.gz
-${RUN} cp -r ${fMRIFolder}/${JacobianOut}_MNI.${FinalfMRIResolution}.nii.gz ${ResultsFolder}/${NameOffMRI}_${JacobianOut}.nii.gz
-${RUN} cp -r ${fMRIFolder}/${FreeSurferBrainMask}.${FinalfMRIResolution}.nii.gz ${ResultsFolder}
-###Add stuff for RMS###
-${RUN} cp -r ${fMRIFolder}/Movement_RelativeRMS.txt ${ResultsFolder}/Movement_RelativeRMS.txt
-${RUN} cp -r ${fMRIFolder}/Movement_AbsoluteRMS.txt ${ResultsFolder}/Movement_AbsoluteRMS.txt
-${RUN} cp -r ${fMRIFolder}/Movement_RelativeRMS_mean.txt ${ResultsFolder}/Movement_RelativeRMS_mean.txt
-${RUN} cp -r ${fMRIFolder}/Movement_AbsoluteRMS_mean.txt ${ResultsFolder}/Movement_AbsoluteRMS_mean.txt
-###Add stuff for RMS###
+if [ ! -e "${fMRIFolder}/${NameOffMRI}_nonlin.nii.gz" ] ; then
+	#One Step Resampling
+	log_Msg "One Step Resampling"
+	log_Msg "mkdir -p ${fMRIFolder}/OneStepResampling"
+	mkdir -p ${fMRIFolder}/OneStepResampling
+	${RUN} ${PipelineScripts}/OneStepResampling.sh \
+		--workingdir=${fMRIFolder}/OneStepResampling \
+    	--infmri=${fMRIFolder}/${OrigTCSName}.nii.gz \
+    	--t1=${AtlasSpaceFolder}/${T1wAtlasName} \
+    	--fmriresout=${FinalfMRIResolution} \
+    	--fmrifolder=${fMRIFolder} \
+    	--fmri2structin=${T1wFolder}/xfms/${fMRI2strOutputTransform} \
+    	--struct2std=${AtlasSpaceFolder}/xfms/${AtlasTransform} \
+    	--owarp=${AtlasSpaceFolder}/xfms/${OutputfMRI2StandardTransform} \
+    	--oiwarp=${AtlasSpaceFolder}/xfms/${Standard2OutputfMRITransform} \
+    	--motionmatdir=${fMRIFolder}/${MotionMatrixFolder} \
+    	--motionmatprefix=${MotionMatrixPrefix} \
+    	--ofmri=${fMRIFolder}/${NameOffMRI}_nonlin \
+    	--freesurferbrainmask=${AtlasSpaceFolder}/${FreeSurferBrainMask} \
+    	--biasfield=${AtlasSpaceFolder}/${BiasFieldMNI} \
+    	--gdfield=${fMRIFolder}/${NameOffMRI}_gdc_warp \
+    	--scoutin=${fMRIFolder}/${OrigScoutName} \
+    	--scoutgdcin=${fMRIFolder}/${ScoutName}_gdc \
+    	--oscout=${fMRIFolder}/${NameOffMRI}_SBRef_nonlin \
+    	--jacobianin=${fMRIFolder}/${JacobianOut} \
+    	--ojacobian=${fMRIFolder}/${JacobianOut}_MNI.${FinalfMRIResolution}
+else
+	echo "\nOne Step Resampling appears complete. Skipping to Intensity Normalization.\n"
+fi
+
+if [ ! -e "${fMRIFolder}/${NameOffMRI}_nonlin_norm.nii.gz" ] ; then
+	#Intensity Normalization and Bias Removal
+	log_Msg "Intensity Normalization and Bias Removal"
+	${RUN} ${PipelineScripts}/IntensityNormalization.sh \
+		--infmri=${fMRIFolder}/${NameOffMRI}_nonlin \
+    	--biasfield=${fMRIFolder}/${BiasFieldMNI}.${FinalfMRIResolution} \
+    	--jacobian=${fMRIFolder}/${JacobianOut}_MNI.${FinalfMRIResolution} \
+    	--brainmask=${fMRIFolder}/${FreeSurferBrainMask}.${FinalfMRIResolution} \
+    	--ofmri=${fMRIFolder}/${NameOffMRI}_nonlin_norm \
+    	--inscout=${fMRIFolder}/${NameOffMRI}_SBRef_nonlin \
+    	--oscout=${fMRIFolder}/${NameOffMRI}_SBRef_nonlin_norm \
+    	--usejacobian=false
+	
+	log_Msg "mkdir -p ${ResultsFolder}"
+	mkdir -p ${ResultsFolder}
+	# MJ QUERY: WHY THE -r OPTIONS BELOW?
+	# TBr Response: Since the copy operations are specifying individual files
+	# to be copied and not directories, the recursive copy options (-r) to the
+	# cp calls below definitely seem unnecessary. They should be removed in 
+	# a code clean up phase when tests are in place to verify that removing them
+	# has no unexpected bad side-effect.
+	${RUN} cp -r ${fMRIFolder}/${NameOffMRI}_nonlin_norm.nii.gz ${ResultsFolder}/${NameOffMRI}.nii.gz
+	${RUN} cp -r ${fMRIFolder}/${MovementRegressor}.txt ${ResultsFolder}/${MovementRegressor}.txt
+	${RUN} cp -r ${fMRIFolder}/${MovementRegressor}_dt.txt ${ResultsFolder}/${MovementRegressor}_dt.txt
+	${RUN} cp -r ${fMRIFolder}/${NameOffMRI}_SBRef_nonlin_norm.nii.gz ${ResultsFolder}/${NameOffMRI}_SBRef.nii.gz
+	${RUN} cp -r ${fMRIFolder}/${JacobianOut}_MNI.${FinalfMRIResolution}.nii.gz ${ResultsFolder}/${NameOffMRI}_${JacobianOut}.nii.gz
+	${RUN} cp -r ${fMRIFolder}/${FreeSurferBrainMask}.${FinalfMRIResolution}.nii.gz ${ResultsFolder}
+	###Add stuff for RMS###
+	${RUN} cp -r ${fMRIFolder}/Movement_RelativeRMS.txt ${ResultsFolder}/Movement_RelativeRMS.txt
+	${RUN} cp -r ${fMRIFolder}/Movement_AbsoluteRMS.txt ${ResultsFolder}/Movement_AbsoluteRMS.txt
+	${RUN} cp -r ${fMRIFolder}/Movement_RelativeRMS_mean.txt ${ResultsFolder}/Movement_RelativeRMS_mean.txt
+	${RUN} cp -r ${fMRIFolder}/Movement_AbsoluteRMS_mean.txt ${ResultsFolder}/Movement_AbsoluteRMS_mean.txt
+	###Add stuff for RMS###
+else
+	echo "\nIntensity Normalization appears complete. Skipping to One Step Resampling (Native).\n"
+fi
+
+if [ ! -e "${fMRIFolder}/${NameOffMRI}_gcd_mc_dc_native.nii.gz" ] ; then
+	#One Step Resampling for Native Space BOLD Output
+	log_Msg "One Step Resampling Native"
+	log_Msg "mkdir -p ${fMRIFolder}/OneStepResampling_native"
+	mkdir -p ${fMRIFolder}/OneStepResampling_native
+	${RUN} ${PipelineScripts}/OneStepResampling_Native.sh \
+		--workingdir=${fMRIFolder}/OneStepResampling_native \
+    	--infmri=${fMRIFolder}/${OrigTCSName}.nii.gz \
+    	--t1=${T1wFolder}/${T1wNativeName} \
+    	--fmriresout=${FinalfMRIResolution} \
+    	--fmrifolder=${fMRIFolder} \
+    	--fmri2structin=${T1wFolder}/xfms/${fMRI2strOutputTransform} \
+    	--owarp=${T1wFolder}/xfms/${OutputfMRI2NativeTransform} \
+    	--oiwarp=${T1wFolder}/xfms/${Native2OutputfMRITransform} \
+    	--motionmatdir=${fMRIFolder}/${MotionMatrixFolder} \
+    	--motionmatprefix=${MotionMatrixPrefix} \
+    	--ofmri=${fMRIFolder}/${NameOffMRI}_gcd_mc_dc_native \
+    	--freesurferbrainmask=${T1wFolder}/${FreeSurferBrainMask} \
+    	--biasfield=${T1wFolder}/${BiasField} \
+    	--gdfield=${fMRIFolder}/${NameOffMRI}_gdc_warp \
+    	--scoutin=${fMRIFolder}/${OrigScoutName} \
+    	--scoutgdcin=${fMRIFolder}/${ScoutName}_gdc \
+    	--oscout=${fMRIFolder}/${NameOffMRI}_SBRef_gdc_mc_dc_native \
+    	--jacobianin=${fMRIFolder}/${JacobianOut} \
+    	--ojacobian=${fMRIFolder}/${JacobianOut}_native.${FinalfMRIResolution}
+else
+	echo "\nOne Step Resampling (Native) appears complete. Skipping to Intensity Normalization (Native).\n"
+fi
+
+if [ ! -e "${fMRIFolder}/${NameOffMRI}_gcd_mc_dc_native_norm.nii.gz" ] ; then
+	#Intensity Normalization and Bias Removal (Native)
+	log_Msg "Intensity Normalization and Bias Removal (Native)"
+	${RUN} ${PipelineScripts}/IntensityNormalization.sh \
+		--infmri=${fMRIFolder}/${NameOffMRI}_gcd_mc_dc_native \
+    	--biasfield=${fMRIFolder}/${BiasField}.${FinalfMRIResolution} \
+    	--jacobian=${fMRIFolder}/${JacobianOut}_native.${FinalfMRIResolution} \
+    	--brainmask=${fMRIFolder}/${FreeSurferBrainMask}_native.${FinalfMRIResolution} \
+    	--ofmri=${fMRIFolder}/${NameOffMRI}_gcd_mc_dc_native_norm \
+    	--inscout=${fMRIFolder}/${NameOffMRI}_SBRef_gdc_mc_dc_native \
+    	--oscout=${fMRIFolder}/${NameOffMRI}_SBRef_gdc_mc_dc_native_norm \
+    	--usejacobian=false
+	
+	log_Msg "mkdir -p ${NativeResultsFolder}"
+	mkdir -p ${NativeResultsFolder}
+	${RUN} cp ${fMRIFolder}/${NameOffMRI}_gcd_mc_dc_native_norm.nii.gz ${NativeResultsFolder}/${NameOffMRI}.nii.gz
+	${RUN} cp ${fMRIFolder}/${MovementRegressor}.txt ${NativeResultsFolder}/${MovementRegressor}.txt
+	${RUN} cp ${fMRIFolder}/${MovementRegressor}_dt.txt ${NativeResultsFolder}/${MovementRegressor}_dt.txt
+	${RUN} cp ${fMRIFolder}/${NameOffMRI}_SBRef_gdc_mc_dc_native_norm.nii.gz ${NativeResultsFolder}/${NameOffMRI}_SBRef.nii.gz
+	${RUN} cp ${fMRIFolder}/${JacobianOut}_native.${FinalfMRIResolution}.nii.gz ${NativeResultsFolder}/${NameOffMRI}_${JacobianOut}.nii.gz
+	${RUN} cp ${fMRIFolder}/${FreeSurferBrainMask}_native.${FinalfMRIResolution}.nii.gz ${NativeResultsFolder}/${FreeSurferBrainMask}.${FinalfMRIResolution}.nii.gz
+	${RUN} cp ${fMRIFolder}/Movement_RelativeRMS_native.txt ${NativeResultsFolder}/Movement_RelativeRMS.txt
+	${RUN} cp ${fMRIFolder}/Movement_AbsoluteRMS_native.txt ${NativeResultsFolder}/Movement_AbsoluteRMS.txt
+	${RUN} cp ${fMRIFolder}/Movement_RelativeRMS_mean_native.txt ${NativeResultsFolder}/Movement_RelativeRMS_mean.txt
+	${RUN} cp ${fMRIFolder}/Movement_AbsoluteRMS_mean_native.txt ${NativeResultsFolder}/Movement_AbsoluteRMS_mean.txt
+else
+	echo "Um, looks like you're pretty much finished with this subject already, buddy?"
+fi
 
 log_Msg "Completed"
-
