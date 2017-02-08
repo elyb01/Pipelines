@@ -30,6 +30,7 @@ Usage() {
   echo "             --scoutgdcin=<input scout gradient nonlinearity distortion corrected image (EPI pre-sat)>"
   echo "             --oscout=<output transformed + distortion corrected scout image>"
   echo "             --ojacobian=<output transformed + distortion corrected Jacobian image>"
+  echo "             --ospace=<MNI or acpc_cd>" #Ely modification 2/7/2017. acpc_dc = native space output
 }
 
 # function for parsing options
@@ -51,19 +52,19 @@ defaultopt() {
 ################################################### OUTPUT FILES #####################################################
 
 # Outputs (in $WD): 
-#         NB: all these images are in standard space 
+#         NB: all these images are in ${ospace} space 
 #             but at the specified resolution (to match the fMRI - i.e. low-res)
 #     ${T1wImageFile}.${FinalfMRIResolution}  
 #     ${FreeSurferBrainMaskFile}.${FinalfMRIResolution}
 #     ${BiasFieldFile}.${FinalfMRIResolution}  
-#     Scout_gdc_MNI_warp     : a warpfield from original (distorted) scout to low-res MNI
+#     Scout_gdc_${ospace}_warp     : a warpfield from original (distorted) scout to low-res MNI or native
 #
 # Outputs (not in either of the above):
-#     ${OutputTransform}  : the warpfield from fMRI to standard (low-res)
+#     ${OutputTransform}  : the warpfield from fMRI to ${ospace} (low-res)
 #     ${OutputfMRI}       
 #     ${JacobianOut}
 #     ${ScoutOutput}
-#          NB: last three images are all in low-res standard space
+#          NB: last three images are all in low-res ${ospace} space
 
 ################################################## OPTION PARSING #####################################################
 
@@ -90,7 +91,8 @@ GradientDistortionField=`getopt1 "--gdfield" $@`  # "${14}"
 ScoutInput=`getopt1 "--scoutin" $@`  # "${15}"
 ScoutInputgdc=`getopt1 "--scoutgdcin" $@`  # "${15}"
 ScoutOutput=`getopt1 "--oscout" $@`  # "${16}"
-JacobianOut=`getopt1 "--ojacobian" $@`  # "${18}"
+JacobianOut=`getopt1 "--ojacobian" $@`  # "${17}"
+OutSpace=`getopt1 "--ospace" $@`  # "${18}"
 
 BiasFieldFile=`basename "$BiasField"`
 T1wImageFile=`basename $T1wImage`
@@ -114,13 +116,30 @@ echo " " >> $WD/log.txt
 TR_vol=`${FSLDIR}/bin/fslval ${InputfMRI} pixdim4 | cut -d " " -f 1`
 NumFrames=`${FSLDIR}/bin/fslval ${InputfMRI} dim4`
 
+#Ely tweak 9/5/14 to resume when aborted during OneStepResampling
+if [ -e ${WD}/postvols ] ; then
+	#Figure out the last volume processed and overwrite in case incomplete
+	CompletedVols=(${WD}/postvols/*_mask.nii.gz)
+	k=$((${#CompletedVols[@]}-1))
+    vnum=`${FSLDIR}/bin/zeropad $k 4`
+    prevmatrix="${MotionMatrixFolder}/${MotionMatrixPrefix}${vnum}"
+	echo "Resuming from volume $k"
+
+	#Repopulate the strings that will be used to concatenate the processed volumes
+	FrameMergeSTRING=""
+	FrameMergeSTRINGII=""
+	for ((j=0; j<$k; ++j)) ; do
+		FrameMergeSTRING="${FrameMergeSTRING}${WD}/postvols/vol${j}.nii.gz " 
+		FrameMergeSTRINGII="${FrameMergeSTRINGII}${WD}/postvols/vol${j}_mask.nii.gz " 
+	done
+else
 # Create fMRI resolution standard space files for T1w image, wmparc, and brain mask
 #   NB: don't use FLIRT to do spline interpolation with -applyisoxfm for the 
 #       2mm and 1mm cases because it doesn't know the peculiarities of the 
 #       MNI template FOVs
-if [ ${FinalfMRIResolution} = "2" ] ; then
+if [ ${FinalfMRIResolution} = "2" ] && [ ${OutSpace} = "MNI" ] ; then
     ResampRefIm=$FSLDIR/data/standard/MNI152_T1_2mm
-elif [ ${FinalfMRIResolution} = "1" ] ; then
+elif [ ${FinalfMRIResolution} = "1" ] && [ ${OutSpace} = "MNI" ] ; then
     ResampRefIm=$FSLDIR/data/standard/MNI152_T1_1mm
 else
   ${FSLDIR}/bin/flirt -interp spline -in ${T1wImage} -ref ${T1wImage} -applyisoxfm $FinalfMRIResolution -out ${WD}/${T1wImageFile}.${FinalfMRIResolution}
@@ -137,10 +156,16 @@ ${FSLDIR}/bin/fslmaths ${WD}/${BiasFieldFile}.${FinalfMRIResolution} -thr 0.1 ${
 
 # Downsample warpfield (fMRI to standard) to increase speed 
 #   NB: warpfield resolution is 10mm, so 1mm to fMRIres downsample loses no precision
+if [ ${OutSpace} = "MNI" ] ; then
 ${FSLDIR}/bin/convertwarp --relout --rel --warp1=${fMRIToStructuralInput} --warp2=${StructuralToStandard} --ref=${WD}/${T1wImageFile}.${FinalfMRIResolution} --out=${OutputTransform}
+else
+${FSLDIR}/bin/convertwarp --relout --rel --warp1=${fMRIToStructuralInput} --ref=${WD}/${T1wImageFile}.${FinalfMRIResolution} --out=${OutputTransform}
+fi
 
 ###Add stuff for RMS###
 invwarp -w ${OutputTransform} -o ${OutputInvTransform} -r ${ScoutInputgdc}
+# Ely note 2/7/17: RMS stats essentially identical for MNI vs. native so only computing once
+if [ ${OutSpace} = "MNI" ] ; then
 applywarp --rel --interp=nn -i ${FreeSurferBrainMask}.nii.gz -r ${ScoutInputgdc} -w ${OutputInvTransform} -o ${ScoutInputgdc}_mask.nii.gz
 if [ -e ${fMRIFolder}/Movement_RelativeRMS.txt ] ; then
   /bin/rm -v ${fMRIFolder}/Movement_RelativeRMS.txt
@@ -155,10 +180,16 @@ if [ -e ${fMRIFolder}/Movement_AbsoluteRMS_mean.txt ] ; then
   /bin/rm -v ${fMRIFolder}/Movement_AbsoluteRMS_mean.txt
 fi
 ###Add stuff for RMS###
+else
+applywarp --rel --interp=nn -i ${FreeSurferBrainMask}.nii.gz -r ${ScoutInputgdc} -w ${OutputInvTransform} -o ${ScoutInputgdc}_mask_${OutSpace}.nii.gz
+fi
 
 
 ${FSLDIR}/bin/imcp ${WD}/${T1wImageFile}.${FinalfMRIResolution} ${fMRIFolder}/${T1wImageFile}.${FinalfMRIResolution}
+if [ ${OutSpace} = "MNI" ] ; then
 ${FSLDIR}/bin/imcp ${WD}/${FreeSurferBrainMaskFile}.${FinalfMRIResolution} ${fMRIFolder}/${FreeSurferBrainMaskFile}.${FinalfMRIResolution}
+else
+${FSLDIR}/bin/imcp ${WD}/${FreeSurferBrainMaskFile}.${FinalfMRIResolution} ${fMRIFolder}/${FreeSurferBrainMaskFile}_${OutSpace}.${FinalfMRIResolution}
 ${FSLDIR}/bin/imcp ${WD}/${BiasFieldFile}.${FinalfMRIResolution} ${fMRIFolder}/${BiasFieldFile}.${FinalfMRIResolution}
 
 mkdir -p ${WD}/prevols
@@ -169,8 +200,11 @@ ${FSLDIR}/bin/fslsplit ${InputfMRI} ${WD}/prevols/vol -t
 FrameMergeSTRING=""
 FrameMergeSTRINGII=""
 k=0
+fi
+
 while [ $k -lt $NumFrames ] ; do
   vnum=`${FSLDIR}/bin/zeropad $k 4`
+if [ ${OutSpace} = "MNI" ] ; then
   ###Add stuff for RMS###
   rmsdiff ${MotionMatrixFolder}/${MotionMatrixPrefix}${vnum} ${MotionMatrixFolder}/${MotionMatrixPrefix}0000 ${ScoutInputgdc} ${ScoutInputgdc}_mask.nii.gz | tail -n 1 >> ${fMRIFolder}/Movement_AbsoluteRMS.txt
   if [ $k -eq 0 ] ; then
@@ -188,6 +222,21 @@ while [ $k -lt $NumFrames ] ; do
   FrameMergeSTRING="${FrameMergeSTRING}${WD}/postvols/vol${k}.nii.gz " 
   FrameMergeSTRINGII="${FrameMergeSTRINGII}${WD}/postvols/vol${k}_mask.nii.gz " 
   k=`echo "$k + 1" | bc`
+elif [ ${OutSpace} = "acpc_dc" ] ; then
+  ${FSLDIR}/bin/convertwarp --relout --rel --ref=${WD}/prevols/vol${vnum}.nii.gz --warp1=${GradientDistortionField} --postmat=${MotionMatrixFolder}/${MotionMatrixPrefix}${vnum} --out=${MotionMatrixFolder}/${MotionMatrixPrefix}${vnum}_${OutSpace}_gdc_warp.nii.gz
+  ${FSLDIR}/bin/convertwarp --relout --rel --ref=${WD}/${T1wImageFile}.${FinalfMRIResolution} --warp1=${MotionMatrixFolder}/${MotionMatrixPrefix}${vnum}_native_gdc_warp.nii.gz --warp2=${OutputTransform} --out=${MotionMatrixFolder}/${MotionMatrixPrefix}${vnum}_${OutSpace}_all_warp.nii.gz
+  ${FSLDIR}/bin/fslmaths ${WD}/prevols/vol${vnum}.nii.gz -mul 0 -add 1 ${WD}/prevols/vol${vnum}_mask.nii.gz
+  ${FSLDIR}/bin/applywarp --rel --interp=spline --in=${WD}/prevols/vol${vnum}.nii.gz --warp=${MotionMatrixFolder}/${MotionMatrixPrefix}${vnum}_${OutSpace}_all_warp.nii.gz --ref=${WD}/${T1wImageFile}.${FinalfMRIResolution} --out=${WD}/postvols/vol${k}.nii.gz
+  ${FSLDIR}/bin/applywarp --rel --interp=nn --in=${WD}/prevols/vol${vnum}_mask.nii.gz --warp=${MotionMatrixFolder}/${MotionMatrixPrefix}${vnum}_${OutSpace}_all_warp.nii.gz --ref=${WD}/${T1wImageFile}.${FinalfMRIResolution} --out=${WD}/postvols/vol${k}_mask.nii.gz
+  FrameMergeSTRING="${FrameMergeSTRING}${WD}/postvols/vol${k}.nii.gz " 
+  FrameMergeSTRINGII="${FrameMergeSTRINGII}${WD}/postvols/vol${k}_mask.nii.gz " 
+  k=`echo "$k + 1" | bc`
+
+else
+	echo "Output space not supported; options are MNI and acpc_dc"
+	exit 1
+fi
+echo "Volume ${k} of ${NumFrames} complete" #Ely added 9/5/14
 done
 # Merge together results and restore the TR (saved beforehand)
 ${FSLDIR}/bin/fslmerge -tr ${OutputfMRI} $FrameMergeSTRING $TR_vol
@@ -195,8 +244,8 @@ ${FSLDIR}/bin/fslmerge -tr ${OutputfMRI}_mask $FrameMergeSTRINGII $TR_vol
 fslmaths ${OutputfMRI}_mask -Tmin ${OutputfMRI}_mask
 
 # Combine transformations: gradient non-linearity distortion + fMRI_dc to standard
-${FSLDIR}/bin/convertwarp --relout --rel --ref=${WD}/${T1wImageFile}.${FinalfMRIResolution} --warp1=${GradientDistortionField} --warp2=${OutputTransform} --out=${WD}/Scout_gdc_MNI_warp.nii.gz
-${FSLDIR}/bin/applywarp --rel --interp=spline --in=${ScoutInput} -w ${WD}/Scout_gdc_MNI_warp.nii.gz -r ${WD}/${T1wImageFile}.${FinalfMRIResolution} -o ${ScoutOutput}
+${FSLDIR}/bin/convertwarp --relout --rel --ref=${WD}/${T1wImageFile}.${FinalfMRIResolution} --warp1=${GradientDistortionField} --warp2=${OutputTransform} --out=${WD}/Scout_gdc_${OutSpace}_warp.nii.gz
+${FSLDIR}/bin/applywarp --rel --interp=spline --in=${ScoutInput} -w ${WD}/Scout_gdc_${OutSpace}_warp.nii.gz -r ${WD}/${T1wImageFile}.${FinalfMRIResolution} -o ${ScoutOutput}
 
 # Create spline interpolated version of Jacobian  (T1w space, fMRI resolution)
 #${FSLDIR}/bin/applywarp --rel --interp=spline -i ${JacobianIn} -r ${WD}/${T1wImageFile}.${FinalfMRIResolution} -w ${StructuralToStandard} -o ${JacobianOut}
@@ -209,6 +258,7 @@ ${FSLDIR}/bin/convertwarp --relout --rel --ref=${fMRIToStructuralInput} --warp1=
 #but, convertwarp's jacobian is 8 frames - each combination of one-sided differences, so average them
 ${FSLDIR}/bin/fslmaths ${WD}/gdc_dc_jacobian -Tmean ${WD}/gdc_dc_jacobian
 
+if [ ${OutSpace} = "MNI" ] ; then
 #and resample it to MNI space
 ${FSLDIR}/bin/applywarp --rel --interp=spline -i ${WD}/gdc_dc_jacobian -r ${WD}/${T1wImageFile}.${FinalfMRIResolution} -w ${StructuralToStandard} -o ${JacobianOut}
 
@@ -216,6 +266,10 @@ ${FSLDIR}/bin/applywarp --rel --interp=spline -i ${WD}/gdc_dc_jacobian -r ${WD}/
 cat ${fMRIFolder}/Movement_RelativeRMS.txt | awk '{ sum += $1} END { print sum / NR }' >> ${fMRIFolder}/Movement_RelativeRMS_mean.txt
 cat ${fMRIFolder}/Movement_AbsoluteRMS.txt | awk '{ sum += $1} END { print sum / NR }' >> ${fMRIFolder}/Movement_AbsoluteRMS_mean.txt
 ###Add stuff for RMS###
+
+else
+${FSLDIR}/bin/applywarp --rel --interp=spline -i ${WD}/gdc_dc_jacobian -r ${WD}/${T1wImageFile}.${FinalfMRIResolution} --premat=$FSLDIR/etc/flirtsch/ident.mat -o ${JacobianOut}
+fi
 
 echo " "
 echo "END: OneStepResampling"
