@@ -295,7 +295,7 @@ else
     ${RUN} ${FSLDIR}/bin/fslmaths "$fMRIFolder"/"$NameOffMRI"_gdc_warp_jacobian -mul 0 -add 1 "$fMRIFolder"/"$NameOffMRI"_gdc_warp_jacobian
 fi
 else
-	echo "\nGradient Distortion Correction appears complete. Skipping to Motion Correction.\n"
+	echo -e "\nGradient Distortion Correction appears complete. Skipping to Motion Correction.\n"
 fi
 
 # Checkpoint 3
@@ -312,16 +312,16 @@ ${RUN} "$PipelineScripts"/MotionCorrection.sh \
     "$MotionMatrixPrefix" \
     "$MotionCorrectionType"
 else
-	echo "\nMotion Correction appears complete. Skipping to EPI Correction.\n"
+	echo -e "\nMotion Correction appears complete. Skipping to EPI Correction.\n"
 fi
+
+DCFolderName=DistortionCorrectionAndEPIToT1wReg_FLIRTBBRAndFreeSurferBBRbased
+DCFolder=${fMRIFolder}/${DCFolderName}
 
 # Checkpoint 4
 if [ ! -e "${fMRIFolder}/OneStepResampling" ] ; then
 # EPI Distortion Correction and EPI to T1w Registration
 log_Msg "EPI Distortion Correction and EPI to T1w Registration"
-
-DCFolderName=DistortionCorrectionAndEPIToT1wReg_FLIRTBBRAndFreeSurferBBRbased
-DCFolder=${fMRIFolder}/${DCFolderName}
 
 if [ -e ${DCFolder} ] ; then
     ${RUN} rm -r ${DCFolder}
@@ -359,7 +359,7 @@ ${RUN} ${PipelineScripts}/DistortionCorrectionAndEPIToT1wReg_FLIRTBBRAndFreeSurf
     --biascorrection=${BiasCorrection} \
     --usejacobian=${UseJacobian}
 else
-	echo "\nEPI Correction appears complete. Skipping to One Step Resampling.\n"
+	echo -e "\nEPI Correction appears complete. Skipping to One Step Resampling.\n"
 fi
 
 # Checkpoint 5
@@ -392,7 +392,7 @@ ${RUN} ${PipelineScripts}/OneStepResampling.sh \
     --ojacobian=${fMRIFolder}/${JacobianOut}_MNI.${FinalfMRIResolution} \
     --ospace="MNI"
 else
-	echo "\nOne Step Resampling appears complete. Skipping to Intensity Normalization.\n"
+	echo -e "\nOne Step Resampling appears complete. Skipping to Intensity Normalization.\n"
 fi
     
 # Checkpoint 6
@@ -453,7 +453,7 @@ ${RUN} cp -r ${fMRIFolder}/Movement_RelativeRMS_mean.txt ${ResultsFolder}/Moveme
 ${RUN} cp -r ${fMRIFolder}/Movement_AbsoluteRMS_mean.txt ${ResultsFolder}/Movement_AbsoluteRMS_mean.txt
 ###Add stuff for RMS###
 else
-	echo "\nIntensity Normalization appears complete. Um, looks like you're pretty much finished with this subject already, buddy?"
+	echo -e "\nIntensity Normalization appears complete. Um, looks like you're pretty much finished with this subject already, buddy?"
 fi
 
 log_Msg "Completed"

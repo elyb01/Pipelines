@@ -11,3 +11,10 @@
 # These are sometimes proprietary and should not be 
 # checked in to a repository.
 *.grad
+*/backup_*
+.DS_Store
+*/.DS_Store
+*/*/.DS_Store
+*/*/*/.DS_Store
+*/*/*/*/.DS_Store
+*/*/*/*/*/.DS_Store

@@ -191,6 +191,7 @@ ${FSLDIR}/bin/imcp ${WD}/${FreeSurferBrainMaskFile}.${FinalfMRIResolution} ${fMR
 else
 ${FSLDIR}/bin/imcp ${WD}/${FreeSurferBrainMaskFile}.${FinalfMRIResolution} ${fMRIFolder}/${FreeSurferBrainMaskFile}_${OutSpace}.${FinalfMRIResolution}
 ${FSLDIR}/bin/imcp ${WD}/${BiasFieldFile}.${FinalfMRIResolution} ${fMRIFolder}/${BiasFieldFile}.${FinalfMRIResolution}
+fi
 
 mkdir -p ${WD}/prevols
 mkdir -p ${WD}/postvols
@@ -200,7 +201,7 @@ ${FSLDIR}/bin/fslsplit ${InputfMRI} ${WD}/prevols/vol -t
 FrameMergeSTRING=""
 FrameMergeSTRINGII=""
 k=0
-fi
+fi # end of Ely resume modification
 
 while [ $k -lt $NumFrames ] ; do
   vnum=`${FSLDIR}/bin/zeropad $k 4`
