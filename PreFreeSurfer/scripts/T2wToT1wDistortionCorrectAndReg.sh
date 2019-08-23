@@ -4,7 +4,30 @@ set -e
 #  installed versions of: FSL (version 5.0.6), HCP-gradunwarp (HCP version 1.0.2)
 #  environment: FSLDIR and PATH for gradient_unwarp.py
 
-SCRIPT_NAME="T2WToT1wDistortionCorrectAndReg.sh"
+# ------------------------------------------------------------------------------
+#  Verify required environment variables are set
+# ------------------------------------------------------------------------------
+
+if [ -z "${FSLDIR}" ]; then
+	echo "$(basename ${0}): ABORTING: FSLDIR environment variable must be set"
+	exit 1
+else
+	echo "$(basename ${0}): FSLDIR: ${FSLDIR}"
+fi
+
+if [ -z "${HCPPIPEDIR_Global}" ]; then
+	echo "$(basename ${0}): ABORTING: HCPPIPEDIR_Global environment variable must be set"
+	exit 1
+else
+	echo "$(basename ${0}): HCPPIPEDIR_Global: ${HCPPIPEDIR_Global}"
+fi
+
+if [ -z "${HCPPIPEDIR}" ]; then
+	echo "$(basename ${0}): ABORTING: HCPPIPEDIR environment variable must be set"
+	exit 1
+else
+	echo "$(basename ${0}): HCPPIPEDIR: ${HCPPIPEDIR}"
+fi
 
 # -----------------------------------------------------------------------------------
 #  Constants for specification of Averaging and Readout Distortion Correction Method
@@ -17,10 +40,12 @@ FIELDMAP_METHOD_OPT="FIELDMAP"
 
 ################################################ SUPPORT FUNCTIONS ##################################################
 
+source ${HCPPIPEDIR}/global/scripts/log.shlib # Logging related functions
+
 Usage() {
-  echo "`basename $0`: Script for performing gradient-nonlinearity and susceptibility-inducted distortion correction on T1w and T2w images, then also registering T2w to T1w"
+  echo "$(basename ${0}): Script for performing gradient-nonlinearity and susceptibility-inducted distortion correction on T1w and T2w images, then also registering T2w to T1w"
   echo " "
-  echo "Usage: `basename $0` [--workingdir=<working directory>]"
+  echo "Usage: $(basename ${0}) [--workingdir=<working directory>]"
   echo "            --t1=<input T1w image>"
   echo "            --t1brain=<input T1w brain-extracted image>"
   echo "            --t2=<input T2w image>"
@@ -31,11 +56,11 @@ Usage() {
   echo "            [--echodiff=<echo time difference for fieldmap images (in milliseconds)>]"
   echo "            [--SEPhaseNeg=<input spin echo negative phase encoding image>]"
   echo "            [--SEPhasePos=<input spin echo positive phase encoding image>]"
-  echo "            [--echospacing=<effective echo spacing of fMRI image, in seconds>]"
-  echo "            [--seunwarpdir=<direction of distortion according to voxel axes>]"
+  echo "            [--seechospacing=<effective echo spacing of SEPhaseNeg and SEPhasePos, in seconds>]"
+  echo "            [--seunwarpdir=<direction of distortion of the SEPhase images according to *voxel* axes: {x,y,x-,y-} or {i,j,i-,j-}>]"
   echo "            --t1sampspacing=<sample spacing (readout direction) of T1w image - in seconds>"
   echo "            --t2sampspacing=<sample spacing (readout direction) of T2w image - in seconds>"
-  echo "            --unwarpdir=<direction of distortion according to voxel axes (post reorient2std)>"
+  echo "            --unwarpdir=<direction of distortion of T1 and T2 according to *voxel* axes (post fslreorient2std): {x,y,z,x-,y-,z-}, or {i,j,k,i-,j-,k-}>"
   echo "            --ot1=<output corrected T1w image>"
   echo "            --ot1brain=<output corrected, brain-extracted T1w image>"
   echo "            --ot1warp=<output warpfield for distortion correction of T1w image>"
@@ -119,7 +144,7 @@ GEB0InputName=`getopt1 "--fmapgeneralelectric" $@`
 TE=`getopt1 "--echodiff" $@`  
 SpinEchoPhaseEncodeNegative=`getopt1 "--SEPhaseNeg" $@`  
 SpinEchoPhaseEncodePositive=`getopt1 "--SEPhasePos" $@`  
-DwellTime=`getopt1 "--echospacing" $@` 
+SEEchoSpacing=`getopt1 "--seechospacing" $@` 
 SEUnwarpDir=`getopt1 "--seunwarpdir" $@`  
 T1wSampleSpacing=`getopt1 "--t1sampspacing" $@`  
 T2wSampleSpacing=`getopt1 "--t2sampspacing" $@`  
@@ -149,8 +174,7 @@ T2wImageBasename=`basename "$T2wImage"`
 
 Modalities="T1w T2w"
 
-echo " "
-echo " START: ${SCRIPT_NAME}"
+log_Msg "START"
 
 mkdir -p $WD
 mkdir -p ${WD}/FieldMap
@@ -216,10 +240,12 @@ case $DistortionCorrection in
         # -- Spin Echo Field Maps --  
         # --------------------------
 
-        if [[ ${SEUnwarpDir} = "x" || ${SEUnwarpDir} = "y" ]] ; then
-          ScoutInputName="${SpinEchoPhaseEncodePositive}"
-        elif [[ ${SEUnwarpDir} = "-x" || ${SEUnwarpDir} = "-y" || ${SEUnwarpDir} = "x-" || ${SEUnwarpDir} = "y-" ]] ; then
-          ScoutInputName="${SpinEchoPhaseEncodeNegative}"
+        if [[ ${SEUnwarpDir} = [xyij] ]] ; then
+			ScoutInputName="${SpinEchoPhaseEncodePositive}"
+        elif [[ ${SEUnwarpDir} = -[xyij] || ${SEUnwarpDir} = [xyij]- ]] ; then
+			ScoutInputName="${SpinEchoPhaseEncodeNegative}"
+		else
+			log_Err_Abort "Invalid entry for --seunwarpdir ($SEUnwarpDir)"
         fi
 
         # Use topup to distortion correct the scout scans
@@ -229,7 +255,7 @@ case $DistortionCorrection in
             --phaseone=${SpinEchoPhaseEncodeNegative} \
             --phasetwo=${SpinEchoPhaseEncodePositive} \
             --scoutin=${ScoutInputName} \
-            --echospacing=${DwellTime} \
+            --echospacing=${SEEchoSpacing} \
             --unwarpdir=${SEUnwarpDir} \
             --ofmapmag=${WD}/Magnitude \
             --ofmapmagbrain=${WD}/Magnitude_brain \
@@ -242,19 +268,22 @@ case $DistortionCorrection in
         ;;
 
     *)
-        echo "${SCRIPT_NAME} - ERROR - Unable to create FSL-suitable readout distortion correction field map"
-        echo "${SCRIPT_NAME}           Unrecognized distortion correction method: ${DistortionCorrection}"
-        exit 1
+        log_Err "Unable to create FSL-suitable readout distortion correction field map"
+        log_Err_Abort "Unrecognized distortion correction method: ${DistortionCorrection}"
 esac
 
+# FSL's naming convention for 'convertwarp --shiftdir' is {x,y,z,x-,y-,z-}
+# So, swap out any {i,j,k} for {x,y,z} (using bash pattern replacement)
+# and then make sure any '-' sign is trailing
+UnwarpDir=${UnwarpDir//i/x}
+UnwarpDir=${UnwarpDir//j/y}
+UnwarpDir=${UnwarpDir//k/z}
 if [ "${UnwarpDir}" = "-x" ] ; then
   UnwarpDir="x-"
 fi
-
 if [ "${UnwarpDir}" = "-y" ] ; then
   UnwarpDir="y-"
 fi
-
 if [ "${UnwarpDir}" = "-z" ] ; then
   UnwarpDir="z-"
 fi
@@ -294,9 +323,9 @@ for TXw in $Modalities ; do
             ;;
 
         *)
-            echo "${SCRIPT_NAME} - ERROR - Unable to apply readout distortion correction"
-            echo "${SCRIPT_NAME}           Unrecognized distortion correction method: ${DistortionCorrection}"
-            exit 1
+            log_Err "Unable to apply readout distortion correction"
+            log_Err_Abort "Unrecognized distortion correction method: ${DistortionCorrection}"
+			
     esac
     
     ${FSLDIR}/bin/flirt -in ${WD}/FieldMap.nii.gz -ref ${TXwImage} -applyxfm -init ${WD}/Fieldmap2${TXwImageBasename}.mat -out ${WD}/FieldMap2${TXwImageBasename}
@@ -343,8 +372,7 @@ ${FSLDIR}/bin/fslmaths ${WD}/T2w2T1w/T2w_reg -mul ${T1wImage} -sqrt ${WD}/T2w2T1
 ${FSLDIR}/bin/imcp ${WD}/T2w2T1w/T2w_dc_reg ${OutputT2wTransform}
 ${FSLDIR}/bin/imcp ${WD}/T2w2T1w/T2w_reg ${OutputT2wImage}
 
-echo " "
-echo " END: ${SCRIPT_NAME}"
+log_Msg "END"
 echo " END: `date`" >> $WD/log.txt
 
 ########################################## QA STUFF ########################################## 

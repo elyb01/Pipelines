@@ -137,9 +137,9 @@ else
 #   NB: don't use FLIRT to do spline interpolation with -applyisoxfm for the 
 #       2mm and 1mm cases because it doesn't know the peculiarities of the 
 #       MNI template FOVs
-if [ ${FinalfMRIResolution} = "2" ] && [ ${OutSpace} = "MNI" ] ; then
+if [[ $(echo "${FinalfMRIResolution} == 2" | bc) == "1" ]] ; then
     ResampRefIm=$FSLDIR/data/standard/MNI152_T1_2mm
-elif [ ${FinalfMRIResolution} = "1" ] && [ ${OutSpace} = "MNI" ] ; then
+elif [[ $(echo "${FinalfMRIResolution} == 1" | bc) == "1" ]] ; then
     ResampRefIm=$FSLDIR/data/standard/MNI152_T1_1mm
 else
   ${FSLDIR}/bin/flirt -interp spline -in ${T1wImage} -ref ${T1wImage} -applyisoxfm $FinalfMRIResolution -out ${WD}/${T1wImageFile}.${FinalfMRIResolution}
@@ -168,16 +168,16 @@ invwarp -w ${OutputTransform} -o ${OutputInvTransform} -r ${ScoutInputgdc}
 if [ ${OutSpace} = "MNI" ] ; then
 applywarp --rel --interp=nn -i ${FreeSurferBrainMask}.nii.gz -r ${ScoutInputgdc} -w ${OutputInvTransform} -o ${ScoutInputgdc}_mask.nii.gz
 if [ -e ${fMRIFolder}/Movement_RelativeRMS.txt ] ; then
-  /bin/rm -v ${fMRIFolder}/Movement_RelativeRMS.txt
+  /bin/rm ${fMRIFolder}/Movement_RelativeRMS.txt
 fi
 if [ -e ${fMRIFolder}/Movement_AbsoluteRMS.txt ] ; then
-  /bin/rm -v ${fMRIFolder}/Movement_AbsoluteRMS.txt
+  /bin/rm ${fMRIFolder}/Movement_AbsoluteRMS.txt
 fi
 if [ -e ${fMRIFolder}/Movement_RelativeRMS_mean.txt ] ; then
-  /bin/rm -v ${fMRIFolder}/Movement_RelativeRMS_mean.txt
+  /bin/rm ${fMRIFolder}/Movement_RelativeRMS_mean.txt
 fi
 if [ -e ${fMRIFolder}/Movement_AbsoluteRMS_mean.txt ] ; then
-  /bin/rm -v ${fMRIFolder}/Movement_AbsoluteRMS_mean.txt
+  /bin/rm ${fMRIFolder}/Movement_AbsoluteRMS_mean.txt
 fi
 ###Add stuff for RMS###
 else
@@ -200,10 +200,9 @@ mkdir -p ${WD}/postvols
 ${FSLDIR}/bin/fslsplit ${InputfMRI} ${WD}/prevols/vol -t
 FrameMergeSTRING=""
 FrameMergeSTRINGII=""
-k=0
 fi # end of Ely resume modification
 
-while [ $k -lt $NumFrames ] ; do
+for (( k=0 ; k < $NumFrames ; k++ )) ; do
   vnum=`${FSLDIR}/bin/zeropad $k 4`
 if [ ${OutSpace} = "MNI" ] ; then
   ###Add stuff for RMS###
@@ -218,27 +217,25 @@ if [ ${OutSpace} = "MNI" ] ; then
   ${FSLDIR}/bin/convertwarp --relout --rel --ref=${WD}/prevols/vol${vnum}.nii.gz --warp1=${GradientDistortionField} --postmat=${MotionMatrixFolder}/${MotionMatrixPrefix}${vnum} --out=${MotionMatrixFolder}/${MotionMatrixPrefix}${vnum}_gdc_warp.nii.gz
   ${FSLDIR}/bin/convertwarp --relout --rel --ref=${WD}/${T1wImageFile}.${FinalfMRIResolution} --warp1=${MotionMatrixFolder}/${MotionMatrixPrefix}${vnum}_gdc_warp.nii.gz --warp2=${OutputTransform} --out=${MotionMatrixFolder}/${MotionMatrixPrefix}${vnum}_all_warp.nii.gz
   ${FSLDIR}/bin/fslmaths ${WD}/prevols/vol${vnum}.nii.gz -mul 0 -add 1 ${WD}/prevols/vol${vnum}_mask.nii.gz
-  ${FSLDIR}/bin/applywarp --rel --interp=spline --in=${WD}/prevols/vol${vnum}.nii.gz --warp=${MotionMatrixFolder}/${MotionMatrixPrefix}${vnum}_all_warp.nii.gz --ref=${WD}/${T1wImageFile}.${FinalfMRIResolution} --out=${WD}/postvols/vol${k}.nii.gz
-  ${FSLDIR}/bin/applywarp --rel --interp=nn --in=${WD}/prevols/vol${vnum}_mask.nii.gz --warp=${MotionMatrixFolder}/${MotionMatrixPrefix}${vnum}_all_warp.nii.gz --ref=${WD}/${T1wImageFile}.${FinalfMRIResolution} --out=${WD}/postvols/vol${k}_mask.nii.gz
-  FrameMergeSTRING="${FrameMergeSTRING}${WD}/postvols/vol${k}.nii.gz " 
-  FrameMergeSTRINGII="${FrameMergeSTRINGII}${WD}/postvols/vol${k}_mask.nii.gz " 
-  k=`echo "$k + 1" | bc`
+  ${FSLDIR}/bin/applywarp --rel --interp=spline --in=${WD}/prevols/vol${vnum}.nii.gz --warp=${MotionMatrixFolder}/${MotionMatrixPrefix}${vnum}_all_warp.nii.gz --ref=${WD}/${T1wImageFile}.${FinalfMRIResolution} --out=${WD}/postvols/vol${vnum}.nii.gz
+  ${FSLDIR}/bin/applywarp --rel --interp=nn --in=${WD}/prevols/vol${vnum}_mask.nii.gz --warp=${MotionMatrixFolder}/${MotionMatrixPrefix}${vnum}_all_warp.nii.gz --ref=${WD}/${T1wImageFile}.${FinalfMRIResolution} --out=${WD}/postvols/vol${vnum}_mask.nii.gz
+  FrameMergeSTRING="${FrameMergeSTRING}${WD}/postvols/vol${vnum}.nii.gz " 
+  FrameMergeSTRINGII="${FrameMergeSTRINGII}${WD}/postvols/vol${vnum}_mask.nii.gz " 
 elif [ ${OutSpace} = "acpc_dc" ] ; then
   ${FSLDIR}/bin/convertwarp --relout --rel --ref=${WD}/prevols/vol${vnum}.nii.gz --warp1=${GradientDistortionField} --postmat=${MotionMatrixFolder}/${MotionMatrixPrefix}${vnum} --out=${MotionMatrixFolder}/${MotionMatrixPrefix}${vnum}_${OutSpace}_gdc_warp.nii.gz
   ${FSLDIR}/bin/convertwarp --relout --rel --ref=${WD}/${T1wImageFile}.${FinalfMRIResolution} --warp1=${MotionMatrixFolder}/${MotionMatrixPrefix}${vnum}_native_gdc_warp.nii.gz --warp2=${OutputTransform} --out=${MotionMatrixFolder}/${MotionMatrixPrefix}${vnum}_${OutSpace}_all_warp.nii.gz
   ${FSLDIR}/bin/fslmaths ${WD}/prevols/vol${vnum}.nii.gz -mul 0 -add 1 ${WD}/prevols/vol${vnum}_mask.nii.gz
-  ${FSLDIR}/bin/applywarp --rel --interp=spline --in=${WD}/prevols/vol${vnum}.nii.gz --warp=${MotionMatrixFolder}/${MotionMatrixPrefix}${vnum}_${OutSpace}_all_warp.nii.gz --ref=${WD}/${T1wImageFile}.${FinalfMRIResolution} --out=${WD}/postvols/vol${k}.nii.gz
-  ${FSLDIR}/bin/applywarp --rel --interp=nn --in=${WD}/prevols/vol${vnum}_mask.nii.gz --warp=${MotionMatrixFolder}/${MotionMatrixPrefix}${vnum}_${OutSpace}_all_warp.nii.gz --ref=${WD}/${T1wImageFile}.${FinalfMRIResolution} --out=${WD}/postvols/vol${k}_mask.nii.gz
-  FrameMergeSTRING="${FrameMergeSTRING}${WD}/postvols/vol${k}.nii.gz " 
-  FrameMergeSTRINGII="${FrameMergeSTRINGII}${WD}/postvols/vol${k}_mask.nii.gz " 
-  k=`echo "$k + 1" | bc`
-
+  ${FSLDIR}/bin/applywarp --rel --interp=spline --in=${WD}/prevols/vol${vnum}.nii.gz --warp=${MotionMatrixFolder}/${MotionMatrixPrefix}${vnum}_${OutSpace}_all_warp.nii.gz --ref=${WD}/${T1wImageFile}.${FinalfMRIResolution} --out=${WD}/postvols/vol${vnum}.nii.gz
+  ${FSLDIR}/bin/applywarp --rel --interp=nn --in=${WD}/prevols/vol${vnum}_mask.nii.gz --warp=${MotionMatrixFolder}/${MotionMatrixPrefix}${vnum}_${OutSpace}_all_warp.nii.gz --ref=${WD}/${T1wImageFile}.${FinalfMRIResolution} --out=${WD}/postvols/vol${vnum}_mask.nii.gz
+  FrameMergeSTRING="${FrameMergeSTRING}${WD}/postvols/vol${vnum}.nii.gz " 
+  FrameMergeSTRINGII="${FrameMergeSTRINGII}${WD}/postvols/vol${vnum}_mask.nii.gz " 
 else
 	echo "Output space not supported; options are MNI and acpc_dc"
 	exit 1
 fi
-echo "Volume ${k} of ${NumFrames} complete" #Ely added 9/5/14
+echo "Volume ${vnum} of ${NumFrames} complete" #Ely added 9/5/14
 done
+
 # Merge together results and restore the TR (saved beforehand)
 ${FSLDIR}/bin/fslmerge -tr ${OutputfMRI} $FrameMergeSTRING $TR_vol
 ${FSLDIR}/bin/fslmerge -tr ${OutputfMRI}_mask $FrameMergeSTRINGII $TR_vol
@@ -271,6 +268,11 @@ cat ${fMRIFolder}/Movement_AbsoluteRMS.txt | awk '{ sum += $1} END { print sum /
 else
 ${FSLDIR}/bin/applywarp --rel --interp=spline -i ${WD}/gdc_dc_jacobian -r ${WD}/${T1wImageFile}.${FinalfMRIResolution} --premat=$FSLDIR/etc/flirtsch/ident.mat -o ${JacobianOut}
 fi
+###Do Basic Cleanup
+rm ${MotionMatrixFolder}/${MotionMatrixPrefix}${vnum}_gdc_warp.nii.gz
+rm ${MotionMatrixFolder}/${MotionMatrixPrefix}${vnum}_all_warp.nii.gz
+rm -r ${WD}/postvols
+rm -r ${WD}/prevols
 
 echo " "
 echo "END: OneStepResampling"
@@ -284,5 +286,3 @@ echo "# Check registrations to low-res standard space" >> $WD/qa.txt
 echo "fslview ${WD}/${T1wImageFile}.${FinalfMRIResolution} ${WD}/${FreeSurferBrainMaskFile}.${FinalfMRIResolution} ${WD}/${BiasFieldFile}.${FinalfMRIResolution} ${OutputfMRI}" >> $WD/qa.txt
 
 ##############################################################################################
-
-

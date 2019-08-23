@@ -9,7 +9,7 @@ function MSMregression(inputspatialmaps,inputdtseries,inputweights,outputspatial
 
 % edits by T.B. Brown to convert string parameters to numeric values
 % as necessary and print debugging information. When used with compiled
-  % Matlab, all parameters are passed in as strings
+% Matlab, all parameters are passed in as strings
 
 func_name='MSMregression';
 fprintf('%s - start\n', func_name);
@@ -107,9 +107,10 @@ if strcmp(Method(1:2),'WR')
         end
         SpatialWeightscii=BO;
         SpatialWeightscii.cdata=mean(corrs,2);
-        ciftisavereset(SpatialWeightscii,outputspatialmaps,wbcommand); 
-        unix([wbcommand ' -cifti-smoothing ' outputspatialmaps ' ' num2str(WRSmoothingSigma) ' ' num2str(WRSmoothingSigma) ' COLUMN ' outputspatialmaps ' -left-surface ' txtfileArray{2,1} ' -right-surface ' txtfileArray{3,1}]);
-        SpatialWeightsSmoothcii=ciftiopen(outputspatialmaps,wbcommand);
+        ciftisavereset(SpatialWeightscii, [outputspatialmaps '_tosmooth.dscalar.nii'], wbcommand);
+        unix([wbcommand ' -cifti-smoothing ' outputspatialmaps '_tosmooth.dscalar.nii ' num2str(WRSmoothingSigma) ' ' num2str(WRSmoothingSigma) ' COLUMN ' outputspatialmaps '_tosmooth.dscalar.nii -left-surface ' txtfileArray{2,1} ' -right-surface ' txtfileArray{3,1}]);
+        SpatialWeightsSmoothcii=ciftiopen([outputspatialmaps '_tosmooth.dscalar.nii'], wbcommand);
+        delete([outputspatialmaps '_tosmooth.dscalar.nii']);
         MEAN=mean(SpatialWeightscii.cdata);
         SpatialWeights=repmat(MEAN,length(SpatialWeightscii.cdata),1)+SpatialWeightscii.cdata-SpatialWeightsSmoothcii.cdata;
         ScaledSpatialWeights=(SpatialWeights.*(SpatialWeights>0)).^3;
@@ -227,4 +228,7 @@ if ~strcmp(inputweights,'NONE')
   ciftisave(OUTBO,outputweights,wbcommand); 
 
 end
+
+fprintf('%s - complete\n', func_name);
+
 end

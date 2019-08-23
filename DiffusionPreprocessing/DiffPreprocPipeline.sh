@@ -125,11 +125,15 @@ PARAMETERs are: [ ] = optional; < > = user supplied value
   --PEdir=<phase-encoding-dir>
                           phase encoding direction specifier: 1=LR/RL, 2=AP/PA
   --posData=<positive-phase-encoding-data>
-                          @ symbol separated list of data with positive phase 
-                          encoding direction (e.g. dataRL1@dataRL2@...dataRLn)
+                          @ symbol separated list of data with 'positive' phase
+                          encoding direction; e.g.,
+                            data_RL1@data_RL2@...data_RLn, or
+                            data_PA1@data_PA2@...data_PAn
   --negData=<negative-phase-encoding-data>
-                          @ symbol separated list of data with negative phase
-                          encoding direction (e.g. dataLR1@dataLR2@...dataLRn)
+                          @ symbol separated list of data with 'negative' phase 
+                          encoding direction; e.g.,
+                            data_LR1@data_LR2@...data_LRn, or
+                            data_AP1@data_AP2@...data_APn
   --echospacing=<echo-spacing>
                           Echo spacing in msecs
   --gdcoeffs=<path-to-gradients-coefficients-file>
@@ -149,11 +153,37 @@ PARAMETERs are: [ ] = optional; < > = user supplied value
                           output the commands that would be executed instead of
                           actually running them. --printcom=echo is intended to 
                           be used for testing purposes
-  [--extra-eddy-args=<value>]
-                          Generic string of arguments to be passed to the 
-                          DiffPreprocPipeline_Eddy.sh script and and subsequently
-                          to the run_eddy.sh script and finally to the command 
-                          that actually invokes the eddy binary
+  [--extra-eddy-arg=<value>]
+                          Generic single token (no whitespace) argument to pass
+                          to the DiffPreprocPipeline_Eddy.sh script and subsequently
+                          to the run_eddy.sh script and finally to the command
+                          that actually invokes the eddy binary. 
+
+                          The following will work:
+
+                            --extra-eddy-arg=--val=1
+
+                          because "--val=1" is a single token containing no whitespace.
+
+                          The following will not work:
+
+                            --extra-eddy-arg="--val1=1 --val2=2"
+
+                          because "--val1=1 --val2=2" is NOT a single token.
+
+                          To build a multi-token series of arguments, you can
+                          specify this --extra-eddy-arg= parameter several times.
+
+                          e.g., 
+
+                            --extra-eddy-arg=--val1=1 --extra-eddy-arg=--val2=2
+
+                          To get an argument like "-flag value" (where there is no
+                          '=' between the flag and the value) passed to the 
+                          eddy binary, the following sequence will work:
+
+                            --extra-eddy-arg=-flag --extra-eddy-arg=value
+
   [--combine-data-flag=<value>]
                           Specified value is passed as the CombineDataFlag value
                           for the eddy_postproc.sh script.
@@ -198,9 +228,9 @@ EOF
 #  ${StudyFolder}         Path to subject's data folder
 #  ${Subject}             Subject ID
 #  ${PEdir}               Phase Encoding Direction, 1=LR/RL, 2=AP/PA
-#  ${PosInputImages}	  @ symbol separated list of data with positive phase 
+#  ${PosInputImages}	  @ symbol separated list of data with 'positive' phase 
 #                         encoding direction
-#  ${NegInputImages}      @ symbol separated lsit of data with negative phase
+#  ${NegInputImages}      @ symbol separated lsit of data with 'negative' phase
 #                         encoding direction
 #  ${echospacing}         Echo spacing in msecs
 #  ${GdCoeffs}			  Path to file containing coefficients that describe 
@@ -468,7 +498,7 @@ main()
 	eddy_cmd+=" --dwiname=${DWIName} "
 	eddy_cmd+=" --printcom=${runcmd} "
    
-	if [ -z "${extra_eddy_args}" ] ; then
+	if [ ! -z "${extra_eddy_args}" ] ; then
 		for extra_eddy_arg in ${extra_eddy_args} ; do
 			eddy_cmd+=" --extra-eddy-arg=${extra_eddy_arg} "
 		done

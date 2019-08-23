@@ -13,6 +13,11 @@ set -e
 
 # TODO
 
+if [ -z "${HCPPIPEDIR}" ]; then
+	echo "GenericfMRIVolumeProcessingPipeline.sh: ABORTING - HCPPIPEDIR environment variable not set"
+	exit 1
+fi
+
 # --------------------------------------------------------------------------------
 #  Load Function Libraries
 # --------------------------------------------------------------------------------
@@ -21,6 +26,63 @@ source $HCPPIPEDIR/global/scripts/log.shlib  # Logging related functions
 source $HCPPIPEDIR/global/scripts/opts.shlib # Command line option functions
 
 ################################################ SUPPORT FUNCTIONS ##################################################
+
+# Validate necesary environment variables
+validate_environment_vars()
+{
+	if [ -z "${FSLDIR}" ]; then
+		log_Err_Abort "FSLDIR environment variable not set"
+	fi
+
+	log_Msg "Environment variables used - Start"
+	log_Msg "HCPPIPEDIR: ${HCPPIPEDIR}"
+	log_Msg "FSLDIR: ${FSLDIR}"
+	log_Msg "Environment variables used - End"
+}
+
+# check for incompatible FSL version
+check_fsl_version()
+{
+	local fsl_version_file
+	local fsl_version
+	local fsl_version_array
+	local fsl_primary_version
+	local fsl_secondary_version
+	local fsl_tertiary_version
+
+	# get the current version of FSL in use
+	fsl_version_file="${FSLDIR}/etc/fslversion"
+
+	if [ -f ${fsl_version_file} ]; then
+		fsl_version=$(cat ${fsl_version_file})
+		log_Msg "Determined that the FSL version in use is ${fsl_version}"
+	else
+		log_Err_Abort "Cannot tell which version of FSL is in use"
+	fi
+
+	# break FSL version string into components: primary, secondary, and tertiary
+	# FSL X.Y.Z would have X as primary, Y as secondary, and Z as tertiary versions
+
+	fsl_version_array=(${fsl_version//./ })
+	
+	fsl_primary_version="${fsl_version_array[0]}"
+	fsl_primary_version=${fsl_primary_version//[!0-9]/}
+
+	fsl_secondary_version="${fsl_version_array[1]}"
+	fsl_secondary_version=${fsl_secondary_version//[!0-9]/}
+
+	fsl_tertiary_version="${fsl_version_array[2]}"
+	fsl_tertiary_version=${fsl_tertiary_version//[!0-9]/}
+
+	# FSL version 6.0.0 is unsupported
+	if [[ $(( ${fsl_primary_version} )) -eq 6 ]]; then
+		if [[ $(( ${fsl_secondary_version} )) -eq 0 ]]; then
+			if [[ $(( ${fsl_tertiary_version} )) -eq 0 ]]; then
+				log_Err_Abort "FSL version 6.0.0 is unsupported. Please upgrade to at least version 6.0.1"
+			fi
+		fi
+	fi
+}
 
 # --------------------------------------------------------------------------------
 #  Usage Description Function
@@ -31,10 +93,9 @@ show_usage() {
     exit 1
 }
 
-# --------------------------------------------------------------------------------
-#   Establish tool name for logging
-# --------------------------------------------------------------------------------
-log_SetToolName "GenericfMRIVolumeProcessingPipeline.sh"
+validate_environment_vars
+
+check_fsl_version
 
 ################################################## OPTION PARSING #####################################################
 
@@ -77,8 +138,8 @@ log_Msg "PhaseInputName: ${PhaseInputName}"
 GEB0InputName=`opts_GetOpt1 "--fmapgeneralelectric" $@`
 log_Msg "GEB0InputName: ${GEB0InputName}"
 
-DwellTime=`opts_GetOpt1 "--echospacing" $@`  
-log_Msg "DwellTime: ${DwellTime}"
+EchoSpacing=`opts_GetOpt1 "--echospacing" $@`  # *Effective* Echo Spacing of fMRI image, in seconds
+log_Msg "EchoSpacing: ${EchoSpacing}"
 
 deltaTE=`opts_GetOpt1 "--echodiff" $@`  
 log_Msg "deltaTE: ${deltaTE}"
@@ -128,8 +189,7 @@ case "$MotionCorrectionType" in
     ;;
     
     *)
-        log_Msg "ERROR: --mctype must be 'MCFLIRT' (default) or 'FLIRT'"
-        exit 1
+		log_Err_Abort "--mctype must be 'MCFLIRT' (default) or 'FLIRT'"
     ;;
 esac
 
@@ -157,8 +217,7 @@ fi
 #sanity check the jacobian option
 if [[ "$UseJacobian" != "true" && "$UseJacobian" != "false" ]]
 then
-    log_Msg "the --usejacobian option must be 'true' or 'false'"
-    exit 1
+	log_Err_Abort "the --usejacobian option must be 'true' or 'false'"
 fi
 
 # Setup PATHS
@@ -202,28 +261,23 @@ fMRIFolder="$Path"/"$Subject"/"$NameOffMRI"
 case "$BiasCorrection" in
     NONE)
         UseBiasFieldMNI=""
-    ;;
+		;;
     LEGACY)
         UseBiasFieldMNI="${fMRIFolder}/${BiasFieldMNI}.${FinalfMRIResolution}"
-    ;;
-    
+		;;    
     SEBASED)
         if [[ "$DistortionCorrection" != "TOPUP" ]]
         then
-            log_Msg "SEBASED bias correction is only available with --dcmethod=TOPUP"
-            exit 1
+            log_Err_Abort "SEBASED bias correction is only available with --dcmethod=TOPUP"
         fi
         UseBiasFieldMNI="$sebasedBiasFieldMNI"
-    ;;
-    
+		;;
     "")
-        log_Msg "--biascorrection option not specified"
-        exit 1
-    ;;
-    
+        log_Err_Abort "--biascorrection option not specified"
+		;;
     *)
-        log_Msg "unrecognized value for bias correction: $BiasCorrection"
-    exit 1
+        log_Err_Abort "unrecognized value for bias correction: $BiasCorrection"
+		;;
 esac
 
 
@@ -263,21 +317,21 @@ if [ ! $GradientDistortionCoeffs = "NONE" ] ; then
     log_Msg "mkdir -p ${fMRIFolder}/GradientDistortionUnwarp"
     mkdir -p "$fMRIFolder"/GradientDistortionUnwarp
     ${RUN} "$GlobalScripts"/GradientDistortionUnwarp.sh \
-	--workingdir="$fMRIFolder"/GradientDistortionUnwarp \
-	--coeffs="$GradientDistortionCoeffs" \
-	--in="$fMRIFolder"/"$OrigTCSName" \
-	--out="$fMRIFolder"/"$NameOffMRI"_gdc \
-	--owarp="$fMRIFolder"/"$NameOffMRI"_gdc_warp
-
+		   --workingdir="$fMRIFolder"/GradientDistortionUnwarp \
+		   --coeffs="$GradientDistortionCoeffs" \
+		   --in="$fMRIFolder"/"$OrigTCSName" \
+		   --out="$fMRIFolder"/"$NameOffMRI"_gdc \
+		   --owarp="$fMRIFolder"/"$NameOffMRI"_gdc_warp
+	
     log_Msg "mkdir -p ${fMRIFolder}/${ScoutName}_GradientDistortionUnwarp"	
-     mkdir -p "$fMRIFolder"/"$ScoutName"_GradientDistortionUnwarp
-     ${RUN} "$GlobalScripts"/GradientDistortionUnwarp.sh \
-	 --workingdir="$fMRIFolder"/"$ScoutName"_GradientDistortionUnwarp \
-	 --coeffs="$GradientDistortionCoeffs" \
-	 --in="$fMRIFolder"/"$OrigScoutName" \
-	 --out="$fMRIFolder"/"$ScoutName"_gdc \
-	 --owarp="$fMRIFolder"/"$ScoutName"_gdc_warp
-	 
+    mkdir -p "$fMRIFolder"/"$ScoutName"_GradientDistortionUnwarp
+    ${RUN} "$GlobalScripts"/GradientDistortionUnwarp.sh \
+		   --workingdir="$fMRIFolder"/"$ScoutName"_GradientDistortionUnwarp \
+		   --coeffs="$GradientDistortionCoeffs" \
+		   --in="$fMRIFolder"/"$OrigScoutName" \
+		   --out="$fMRIFolder"/"$ScoutName"_gdc \
+		   --owarp="$fMRIFolder"/"$ScoutName"_gdc_warp
+	
 	if [[ $UseJacobian == "true" ]]
 	then
 	    ${RUN} ${FSLDIR}/bin/fslmaths "$fMRIFolder"/"$NameOffMRI"_gdc -mul "$fMRIFolder"/"$NameOffMRI"_gdc_warp_jacobian "$fMRIFolder"/"$NameOffMRI"_gdc
@@ -315,6 +369,9 @@ else
 	echo -e "\nMotion Correction appears complete. Skipping to EPI Correction.\n"
 fi
 
+# EPI Distortion Correction and EPI to T1w Registration
+log_Msg "EPI Distortion Correction and EPI to T1w Registration"
+
 DCFolderName=DistortionCorrectionAndEPIToT1wReg_FLIRTBBRAndFreeSurferBBRbased
 DCFolder=${fMRIFolder}/${DCFolderName}
 
@@ -330,34 +387,34 @@ log_Msg "mkdir -p ${DCFolder}"
 mkdir -p ${DCFolder}
 
 ${RUN} ${PipelineScripts}/DistortionCorrectionAndEPIToT1wReg_FLIRTBBRAndFreeSurferBBRbased.sh \
-    --workingdir=${DCFolder} \
-    --scoutin=${fMRIFolder}/${ScoutName}_gdc \
-    --t1=${T1wFolder}/${T1wImage} \
-    --t1restore=${T1wFolder}/${T1wRestoreImage} \
-    --t1brain=${T1wFolder}/${T1wRestoreImageBrain} \
-    --fmapmag=${MagnitudeInputName} \
-    --fmapphase=${PhaseInputName} \
-    --fmapgeneralelectric=${GEB0InputName} \
-    --echodiff=${deltaTE} \
-    --SEPhaseNeg=${SpinEchoPhaseEncodeNegative} \
-    --SEPhasePos=${SpinEchoPhaseEncodePositive} \
-    --echospacing=${DwellTime} \
-    --unwarpdir=${UnwarpDir} \
-    --owarp=${T1wFolder}/xfms/${fMRI2strOutputTransform} \
-    --biasfield=${T1wFolder}/${BiasField} \
-    --oregim=${fMRIFolder}/${RegOutput} \
-    --freesurferfolder=${T1wFolder} \
-    --freesurfersubjectid=${Subject} \
-    --gdcoeffs=${GradientDistortionCoeffs} \
-    --qaimage=${fMRIFolder}/${QAImage} \
-    --method=${DistortionCorrection} \
-    --topupconfig=${TopupConfig} \
-    --ojacobian=${fMRIFolder}/${JacobianOut} \
-    --dof=${dof} \
-    --fmriname=${NameOffMRI} \
-    --subjectfolder=${SubjectFolder} \
-    --biascorrection=${BiasCorrection} \
-    --usejacobian=${UseJacobian}
+       --workingdir=${DCFolder} \
+       --scoutin=${fMRIFolder}/${ScoutName}_gdc \
+       --t1=${T1wFolder}/${T1wImage} \
+       --t1restore=${T1wFolder}/${T1wRestoreImage} \
+       --t1brain=${T1wFolder}/${T1wRestoreImageBrain} \
+       --fmapmag=${MagnitudeInputName} \
+       --fmapphase=${PhaseInputName} \
+       --fmapgeneralelectric=${GEB0InputName} \
+       --echodiff=${deltaTE} \
+       --SEPhaseNeg=${SpinEchoPhaseEncodeNegative} \
+       --SEPhasePos=${SpinEchoPhaseEncodePositive} \
+       --echospacing=${EchoSpacing} \
+       --unwarpdir=${UnwarpDir} \
+       --owarp=${T1wFolder}/xfms/${fMRI2strOutputTransform} \
+       --biasfield=${T1wFolder}/${BiasField} \
+       --oregim=${fMRIFolder}/${RegOutput} \
+       --freesurferfolder=${T1wFolder} \
+       --freesurfersubjectid=${Subject} \
+       --gdcoeffs=${GradientDistortionCoeffs} \
+       --qaimage=${fMRIFolder}/${QAImage} \
+       --method=${DistortionCorrection} \
+       --topupconfig=${TopupConfig} \
+       --ojacobian=${fMRIFolder}/${JacobianOut} \
+       --dof=${dof} \
+       --fmriname=${NameOffMRI} \
+       --subjectfolder=${SubjectFolder} \
+       --biascorrection=${BiasCorrection} \
+       --usejacobian=${UseJacobian}
 else
 	echo -e "\nEPI Correction appears complete. Skipping to One Step Resampling.\n"
 fi
@@ -370,27 +427,25 @@ log_Msg "mkdir -p ${fMRIFolder}/OneStepResampling"
 
 mkdir -p ${fMRIFolder}/OneStepResampling
 ${RUN} ${PipelineScripts}/OneStepResampling.sh \
-    --workingdir=${fMRIFolder}/OneStepResampling \
-    --infmri=${fMRIFolder}/${OrigTCSName}.nii.gz \
-    --t1=${AtlasSpaceFolder}/${T1wAtlasName} \
-    --fmriresout=${FinalfMRIResolution} \
-    --fmrifolder=${fMRIFolder} \
-    --fmri2structin=${T1wFolder}/xfms/${fMRI2strOutputTransform} \
-    --struct2std=${AtlasSpaceFolder}/xfms/${AtlasTransform} \
-    --owarp=${AtlasSpaceFolder}/xfms/${OutputfMRI2StandardTransform} \
-    --oiwarp=${AtlasSpaceFolder}/xfms/${Standard2OutputfMRITransform} \
-    --motionmatdir=${fMRIFolder}/${MotionMatrixFolder} \
-    --motionmatprefix=${MotionMatrixPrefix} \
-    --ofmri=${fMRIFolder}/${NameOffMRI}_nonlin \
-    --freesurferbrainmask=${AtlasSpaceFolder}/${FreeSurferBrainMask} \
-    --biasfield=${AtlasSpaceFolder}/${BiasFieldMNI} \
-    --gdfield=${fMRIFolder}/${NameOffMRI}_gdc_warp \
-    --scoutin=${fMRIFolder}/${OrigScoutName} \
-    --scoutgdcin=${fMRIFolder}/${ScoutName}_gdc \
-    --oscout=${fMRIFolder}/${NameOffMRI}_SBRef_nonlin \
-    --jacobianin=${fMRIFolder}/${JacobianOut} \
-    --ojacobian=${fMRIFolder}/${JacobianOut}_MNI.${FinalfMRIResolution} \
-    --ospace="MNI"
+       --workingdir=${fMRIFolder}/OneStepResampling \
+       --infmri=${fMRIFolder}/${OrigTCSName}.nii.gz \
+       --t1=${AtlasSpaceFolder}/${T1wAtlasName} \
+       --fmriresout=${FinalfMRIResolution} \
+       --fmrifolder=${fMRIFolder} \
+       --fmri2structin=${T1wFolder}/xfms/${fMRI2strOutputTransform} \
+       --struct2std=${AtlasSpaceFolder}/xfms/${AtlasTransform} \
+       --owarp=${AtlasSpaceFolder}/xfms/${OutputfMRI2StandardTransform} \
+       --oiwarp=${AtlasSpaceFolder}/xfms/${Standard2OutputfMRITransform} \
+       --motionmatdir=${fMRIFolder}/${MotionMatrixFolder} \
+       --motionmatprefix=${MotionMatrixPrefix} \
+       --ofmri=${fMRIFolder}/${NameOffMRI}_nonlin \
+       --freesurferbrainmask=${AtlasSpaceFolder}/${FreeSurferBrainMask} \
+       --biasfield=${AtlasSpaceFolder}/${BiasFieldMNI} \
+       --gdfield=${fMRIFolder}/${NameOffMRI}_gdc_warp \
+       --scoutin=${fMRIFolder}/${OrigScoutName} \
+       --scoutgdcin=${fMRIFolder}/${ScoutName}_gdc \
+       --oscout=${fMRIFolder}/${NameOffMRI}_SBRef_nonlin \
+       --ojacobian=${fMRIFolder}/${JacobianOut}_MNI.${FinalfMRIResolution}
 else
 	echo -e "\nOne Step Resampling appears complete. Skipping to Intensity Normalization.\n"
 fi
@@ -407,8 +462,9 @@ if [[ ${DistortionCorrection} == "TOPUP" ]]
 then
     #create MNI space corrected fieldmap images
     ${FSLDIR}/bin/applywarp --rel --interp=spline --in=${DCFolder}/PhaseOne_gdc_dc_unbias -w ${AtlasSpaceFolder}/xfms/${AtlasTransform} -r ${fMRIFolder}/${NameOffMRI}_SBRef_nonlin -o ${ResultsFolder}/${NameOffMRI}_PhaseOne_gdc_dc
+    ${FSLDIR}/bin/fslmaths ${ResultsFolder}/${NameOffMRI}_PhaseOne_gdc_dc -mas ${fMRIFolder}/${FreeSurferBrainMask}.${FinalfMRIResolution}.nii.gz ${ResultsFolder}/${NameOffMRI}_PhaseOne_gdc_dc
     ${FSLDIR}/bin/applywarp --rel --interp=spline --in=${DCFolder}/PhaseTwo_gdc_dc_unbias -w ${AtlasSpaceFolder}/xfms/${AtlasTransform} -r ${fMRIFolder}/${NameOffMRI}_SBRef_nonlin -o ${ResultsFolder}/${NameOffMRI}_PhaseTwo_gdc_dc
-    
+    ${FSLDIR}/bin/fslmaths ${ResultsFolder}/${NameOffMRI}_PhaseTwo_gdc_dc -mas ${fMRIFolder}/${FreeSurferBrainMask}.${FinalfMRIResolution}.nii.gz ${ResultsFolder}/${NameOffMRI}_PhaseTwo_gdc_dc    
     #create MNINonLinear final fMRI resolution bias field outputs
     if [[ ${BiasCorrection} == "SEBASED" ]]
     then
@@ -419,20 +475,25 @@ then
         ${FSLDIR}/bin/fslmaths ${ResultsFolder}/${NameOffMRI}_sebased_reference.nii.gz -mas ${fMRIFolder}/${FreeSurferBrainMask}.${FinalfMRIResolution}.nii.gz ${ResultsFolder}/${NameOffMRI}_sebased_reference.nii.gz
         
         ${FSLDIR}/bin/applywarp --interp=trilinear -i ${DCFolder}/ComputeSpinEchoBiasField/${NameOffMRI}_dropouts.nii.gz -r ${fMRIFolder}/${NameOffMRI}_SBRef_nonlin -w ${AtlasSpaceFolder}/xfms/${AtlasTransform} -o ${ResultsFolder}/${NameOffMRI}_dropouts.nii.gz
+
+        ${FSLDIR}/bin/applywarp --interp=trilinear -i ${DCFolder}/ComputeSpinEchoBiasField/${NameOffMRI}_pseudo_transmit_raw.nii.gz -r ${fMRIFolder}/${NameOffMRI}_SBRef_nonlin -w ${AtlasSpaceFolder}/xfms/${AtlasTransform} -o ${ResultsFolder}/${NameOffMRI}_pseudo_transmit_raw.nii.gz
+        ${FSLDIR}/bin/fslmaths ${ResultsFolder}/${NameOffMRI}_pseudo_transmit_raw.nii.gz -mas ${fMRIFolder}/${FreeSurferBrainMask}.${FinalfMRIResolution}.nii.gz ${ResultsFolder}/${NameOffMRI}_pseudo_transmit_raw.nii.gz
+        ${FSLDIR}/bin/applywarp --interp=trilinear -i ${DCFolder}/ComputeSpinEchoBiasField/${NameOffMRI}_pseudo_transmit_field.nii.gz -r ${fMRIFolder}/${NameOffMRI}_SBRef_nonlin -w ${AtlasSpaceFolder}/xfms/${AtlasTransform} -o ${ResultsFolder}/${NameOffMRI}_pseudo_transmit_field.nii.gz
+        ${FSLDIR}/bin/fslmaths ${ResultsFolder}/${NameOffMRI}_pseudo_transmit_field.nii.gz -mas ${fMRIFolder}/${FreeSurferBrainMask}.${FinalfMRIResolution}.nii.gz ${ResultsFolder}/${NameOffMRI}_pseudo_transmit_field.nii.gz
     fi
 fi
 
 #Intensity Normalization and Bias Removal
 log_Msg "Intensity Normalization and Bias Removal"
 ${RUN} ${PipelineScripts}/IntensityNormalization.sh \
-    --infmri=${fMRIFolder}/${NameOffMRI}_nonlin \
-    --biasfield=${UseBiasFieldMNI} \
-    --jacobian=${fMRIFolder}/${JacobianOut}_MNI.${FinalfMRIResolution} \
-    --brainmask=${fMRIFolder}/${FreeSurferBrainMask}.${FinalfMRIResolution} \
-    --ofmri=${fMRIFolder}/${NameOffMRI}_nonlin_norm \
-    --inscout=${fMRIFolder}/${NameOffMRI}_SBRef_nonlin \
-    --oscout=${fMRIFolder}/${NameOffMRI}_SBRef_nonlin_norm \
-    --usejacobian=${UseJacobian}
+       --infmri=${fMRIFolder}/${NameOffMRI}_nonlin \
+       --biasfield=${UseBiasFieldMNI} \
+       --jacobian=${fMRIFolder}/${JacobianOut}_MNI.${FinalfMRIResolution} \
+       --brainmask=${fMRIFolder}/${FreeSurferBrainMask}.${FinalfMRIResolution} \
+       --ofmri=${fMRIFolder}/${NameOffMRI}_nonlin_norm \
+       --inscout=${fMRIFolder}/${NameOffMRI}_SBRef_nonlin \
+       --oscout=${fMRIFolder}/${NameOffMRI}_SBRef_nonlin_norm \
+       --usejacobian=${UseJacobian}
 
 # MJ QUERY: WHY THE -r OPTIONS BELOW?
 # TBr Response: Since the copy operations are specifying individual files
@@ -455,6 +516,14 @@ ${RUN} cp -r ${fMRIFolder}/Movement_AbsoluteRMS_mean.txt ${ResultsFolder}/Moveme
 else
 	echo -e "\nIntensity Normalization appears complete. Um, looks like you're pretty much finished with this subject already, buddy?"
 fi
+
+#Basic Cleanup
+rm ${fMRIFolder}/${NameOffMRI}_nonlin_norm.nii.gz
+
+#Econ
+#rm "$fMRIFolder"/"$OrigTCSName".nii.gz
+#rm "$fMRIFolder"/"$NameOffMRI"_gdc.nii.gz
+#rm "$fMRIFolder"/"$NameOffMRI"_mc.nii.gz
 
 log_Msg "Completed"
 

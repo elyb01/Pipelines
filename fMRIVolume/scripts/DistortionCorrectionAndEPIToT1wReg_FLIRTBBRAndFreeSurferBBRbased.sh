@@ -37,7 +37,7 @@ Usage() {
   echo "             --SEPhaseNeg=<input spin echo negative phase encoding image>"
   echo "             --SEPhasePos=<input spin echo positive phase encoding image>"
   echo "             --echospacing=<effective echo spacing of fMRI image, in seconds>"
-  echo "             --unwarpdir=<unwarping direction: x/y/z/-x/-y/-z>"
+  echo "             --unwarpdir=<PE direction for unwarping according to the *voxel* axes: {x,y,z,x-,y-,z-} or {i,j,k,i-,j-,k-}>"
   echo "             --owarp=<output filename for warp of EPI to T1w>"
   echo "             --biasfield=<input T1w bias field estimate image, in fMRI space>"
   echo "             --oregim=<output registered image (EPI to T1w)>"
@@ -140,7 +140,7 @@ T1wRestoreImage=`getopt1 "--t1restore" $@`
 T1wBrainImage=`getopt1 "--t1brain" $@`
 SpinEchoPhaseEncodeNegative=`getopt1 "--SEPhaseNeg" $@`
 SpinEchoPhaseEncodePositive=`getopt1 "--SEPhasePos" $@`
-DwellTime=`getopt1 "--echospacing" $@`
+EchoSpacing=`getopt1 "--echospacing" $@`
 MagnitudeInputName=`getopt1 "--fmapmag" $@`
 PhaseInputName=`getopt1 "--fmapphase" $@`
 GEB0InputName=`getopt1 "--fmapgeneralelectric" $@`
@@ -233,6 +233,28 @@ fi
 
 cp ${T1wBrainImage}.nii.gz ${WD}/${T1wBrainImageFile}.nii.gz
 
+# Explicit check on the allowed values of UnwarpDir
+if [[ ${UnwarpDir} != [xyzijk] && ${UnwarpDir} != -[xyzijk] && ${UnwarpDir} != [xyzijk]- ]]; then
+	log_Msg "Error: Invalid entry for --unwarpdir ($UnwarpDir)"
+	exit 1
+fi
+	
+# FSL's naming convention for 'epi_reg --pedir' is {x,y,z,-x,-y,-z}
+# So, swap out any {i,j,k} for {x,y,z} (using bash pattern replacement)
+# and then make sure any '-' sign is preceding
+UnwarpDir=${UnwarpDir//i/x}
+UnwarpDir=${UnwarpDir//j/y}
+UnwarpDir=${UnwarpDir//k/z}
+if [ "${UnwarpDir}" = "x-" ] ; then
+  UnwarpDir="-x"
+fi
+if [ "${UnwarpDir}" = "y-" ] ; then
+  UnwarpDir="-y"
+fi
+if [ "${UnwarpDir}" = "z-" ] ; then
+  UnwarpDir="-z"
+fi
+
 case $DistortionCorrection in
 
     ${FIELDMAP_METHOD_OPT} | ${SIEMENS_METHOD_OPT} | ${GENERAL_ELECTRIC_METHOD_OPT})
@@ -293,11 +315,11 @@ case $DistortionCorrection in
             fslmaths ${WD}/Scout.nii.gz -mas ${WD}/Scout_brain_mask.nii.gz ${WD}/Scout_brain.nii.gz
        
             # register scout to T1w image using fieldmap
-            ${HCPPIPEDIR_Global}/epi_reg_dof --dof=${dof} --epi=${WD}/Scout_brain.nii.gz --t1=${T1wImage} --t1brain=${WD}/${T1wBrainImageFile} --out=${WD}/${ScoutInputFile}_undistorted --fmap=${WD}/FieldMap.nii.gz --fmapmag=${WD}/Magnitude.nii.gz --fmapmagbrain=${WD}/Magnitude_brain.nii.gz --echospacing=${DwellTime} --pedir=${UnwarpDir}
+            ${HCPPIPEDIR_Global}/epi_reg_dof --dof=${dof} --epi=${WD}/Scout_brain.nii.gz --t1=${T1wImage} --t1brain=${WD}/${T1wBrainImageFile} --out=${WD}/${ScoutInputFile}_undistorted --fmap=${WD}/FieldMap.nii.gz --fmapmag=${WD}/Magnitude.nii.gz --fmapmagbrain=${WD}/Magnitude_brain.nii.gz --echospacing=${EchoSpacing} --pedir=${UnwarpDir}
 
         else
             # register scout to T1w image using fieldmap
-            ${HCPPIPEDIR_Global}/epi_reg_dof --dof=${dof} --epi=${WD}/Scout.nii.gz --t1=${T1wImage} --t1brain=${WD}/${T1wBrainImageFile} --out=${WD}/${ScoutInputFile}_undistorted --fmap=${WD}/FieldMap.nii.gz --fmapmag=${WD}/Magnitude.nii.gz --fmapmagbrain=${WD}/Magnitude_brain.nii.gz --echospacing=${DwellTime} --pedir=${UnwarpDir}
+            ${HCPPIPEDIR_Global}/epi_reg_dof --dof=${dof} --epi=${WD}/Scout.nii.gz --t1=${T1wImage} --t1brain=${WD}/${T1wBrainImageFile} --out=${WD}/${ScoutInputFile}_undistorted --fmap=${WD}/FieldMap.nii.gz --fmapmag=${WD}/Magnitude.nii.gz --fmapmagbrain=${WD}/Magnitude_brain.nii.gz --echospacing=${EchoSpacing} --pedir=${UnwarpDir}
 
         fi
 
@@ -330,7 +352,7 @@ case $DistortionCorrection in
             --phaseone=${SpinEchoPhaseEncodeNegative} \
             --phasetwo=${SpinEchoPhaseEncodePositive} \
             --scoutin=${ScoutInputName} \
-            --echospacing=${DwellTime} \
+            --echospacing=${EchoSpacing} \
             --unwarpdir=${UnwarpDir} \
             --owarp=${WD}/WarpField \
             --ojacobian=${WD}/Jacobian \
@@ -565,11 +587,12 @@ then
             #${FSLDIR}/bin/imcp ${WD}/${File}_unbias ${SubjectFolder}/T1w/Results/${NameOffMRI}/${NameOffMRI}_${File}
         done
         
-        #copy bias field and dropouts, etc to results dir
+        #copy recieve field, pseudo transmit field, and dropouts, etc to results dir
         ${FSLDIR}/bin/imcp "$WD/ComputeSpinEchoBiasField/${NameOffMRI}_dropouts" "$SubjectFolder/T1w/Results/$NameOffMRI/${NameOffMRI}_dropouts"
         ${FSLDIR}/bin/imcp "$WD/ComputeSpinEchoBiasField/${NameOffMRI}_sebased_bias" "$SubjectFolder/T1w/Results/$NameOffMRI/${NameOffMRI}_sebased_bias"
         ${FSLDIR}/bin/imcp "$WD/ComputeSpinEchoBiasField/${NameOffMRI}_sebased_reference" "$SubjectFolder/T1w/Results/$NameOffMRI/${NameOffMRI}_sebased_reference"
-        
+        ${FSLDIR}/bin/imcp "$WD/ComputeSpinEchoBiasField/${NameOffMRI}_pseudo_transmit_raw" "$SubjectFolder/T1w/Results/$NameOffMRI/${NameOffMRI}_pseudo_transmit_raw"
+        ${FSLDIR}/bin/imcp "$WD/ComputeSpinEchoBiasField/${NameOffMRI}_pseudo_transmit_field" "$SubjectFolder/T1w/Results/$NameOffMRI/${NameOffMRI}_pseudo_transmit_field"
     else
         #don't need to do anything more with scout, it is 1-step resampled and bias correction, jacobians reapplied
         Files="PhaseOne_gdc_dc PhaseTwo_gdc_dc"
